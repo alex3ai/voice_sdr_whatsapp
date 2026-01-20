@@ -1,0 +1,54 @@
+# ========================================
+# Segurança (CRÍTICO)
+# ========================================
+# NUNCA copie segredos ou chaves para a imagem
+.env
+.env.*
+*.pem
+*.key
+*.cert
+
+# ========================================
+# Python & Dependências
+# ========================================
+# O Docker vai instalar dependências limpas; não copie as locais
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ========================================
+# Git & IDEs
+# ========================================
+# Reduz drasticamente o tempo de build (contexto menor)
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# ========================================
+# Arquivos Temporários & Logs
+# ========================================
+logs/
+*.log
+tmp/
+temp/
+# Ignora áudios gerados localmente durante testes
+*.mp3
+*.ogg
+*.wav
+
+# ========================================
+# Docker Metadata
+# ========================================
+# O container não precisa saber como ele foi construído
+Dockerfile
+docker-compose.yml
+.dockerignore
