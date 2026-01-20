@@ -7,34 +7,54 @@ services:
       context: .
       dockerfile: Dockerfile
     
-    # Carrega variáveis de ambiente
+    # Mapeamento de portas (Permite mudar a porta via .env se necessário)
+    ports:
+      - "${PORT:-8000}:8000"
+    
+    # Carrega variáveis
     env_file:
       - .env
     
-    # Mapeamento de portas (Host:Container)
-    ports:
-      - "8000:8000"
+    # VOLUME (CRÍTICO PARA DEV):
+    # Espelha sua pasta local 'app' para dentro do container.
+    # Assim, qualquer alteração no código reinicia o servidor automaticamente.
+    volumes:
+      - ./app:/app/app:ro
     
-    # Política de Reinício: Sobe sozinho se cair (crash) ou se o servidor reiniciar
+    # Comando com --reload ativado para desenvolvimento
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    
+    # Política de Reinício
     restart: unless-stopped
     
-    # SRE: Rotação de Logs (Evita disco cheio em servidores de produção)
+    # Logs Rotativos (SRE)
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-    # SRE: Limites de Hardware (Crítico para aplicações com FFmpeg/IA)
-    # Impede que um pico de uso trave o sistema operacional do host
+    # Healthcheck (Redundância para o Dockerfile)
+    # Garante que o container só receba tráfego quando o FastAPI estiver 100%
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Limites de Hardware (Segurança do Gemini)
+    # 1GB é o mínimo seguro para rodar FFmpeg + FastAPI + Gemini Client
     deploy:
       resources:
         limits:
-          cpus: '1.0'        # Máximo de 1 CPU core
-          memory: 1G         # Máximo de 1GB de RAM
+          cpus: '1.0'
+          memory: 1G
         reservations:
-          cpus: '0.25'       # Garante minímo de 25% de um core
-          memory: 256M       # Garante mínimo de 256MB RAM
+          cpus: '0.25'
+          memory: 256M
 
-    # (Opcional) Volume para persistência se necessário, 
-    # mas para este app stateless não é obrigatório.
+# Rede isolada (Opcional, mas boa prática)
+networks:
+  default:
+    name: voice_sdr_network
