@@ -1,50 +1,111 @@
 version: '3.8'
 
 services:
-  voice-sdr:
-    container_name: voice_sdr_app
+  # ========================================
+  # Evolution API v2 (Gateway WhatsApp)
+  # ========================================
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: evolution_whatsapp
+    restart: unless-stopped
+    
+    # Exposição de porta (Apenas para gestão, o bot fala via rede interna)
+    ports:
+      - "8080:8080"
+    
+    environment:
+      # --- Servidor ---
+      - SERVER_URL=http://localhost:8080
+      - DOCKER_ENV=true
+      
+      # --- Segurança (Chave Global) ---
+      # Esta chave protege a API de comandos não autorizados
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
+      
+      # --- Banco de Dados (Modo Leve/Arquivo) ---
+      - DATABASE_ENABLED=false
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      
+      # --- Webhooks (Onde o bot mora) ---
+      - WEBHOOK_GLOBAL_ENABLED=true
+      # Nota: Usamos o nome do container 'sdr-bot' para comunicação interna
+      - WEBHOOK_GLOBAL_URL=http://sdr-bot:8000/webhook/evolution
+      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
+      
+      # --- Filtro de Eventos (Performance) ---
+      # Ativamos APENAS o necessário para economizar CPU
+      - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
+      - WEBHOOK_EVENTS_QRCODE_UPDATED=true       # Para ler o QR Code
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true      # Para receber mensagens
+      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true    # Para saber se caiu
+      # Desativando todo o resto para evitar ruído
+      - WEBHOOK_EVENTS_MESSAGES_UPDATE=false
+      - WEBHOOK_EVENTS_MESSAGES_DELETE=false
+      - WEBHOOK_EVENTS_SEND_MESSAGE=false
+      - WEBHOOK_EVENTS_CONTACTS_SET=false
+      - WEBHOOK_EVENTS_CONTACTS_UPSERT=false
+      - WEBHOOK_EVENTS_CONTACTS_UPDATE=false
+      - WEBHOOK_EVENTS_PRESENCE_UPDATE=false
+      - WEBHOOK_EVENTS_CHATS_SET=false
+      - WEBHOOK_EVENTS_CHATS_UPSERT=false
+      - WEBHOOK_EVENTS_CHATS_UPDATE=false
+      - WEBHOOK_EVENTS_GROUPS_UPSERT=false
+      - WEBHOOK_EVENTS_MEDIA_MESSAGE=false # O UPSERT já traz a mídia
+      
+      # --- Logs (Silencioso em Produção) ---
+      - LOG_LEVEL=ERROR
+      - LOG_BAILEYS=error
+    
+    # Persistência da Sessão do WhatsApp
+    volumes:
+      - ./evolution_data/instances:/evolution/instances
+      - ./evolution_data/store:/evolution/store
+    
+    networks:
+      - voice_sdr_network
+    
+    # Healthcheck da API
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ========================================
+  # Voice SDR Bot (Nosso Backend Python)
+  # ========================================
+  sdr-bot:
     build: 
       context: .
       dockerfile: Dockerfile
+    container_name: voice_sdr_bot
+    restart: unless-stopped
     
-    # Mapeamento de portas (Permite mudar a porta via .env se necessário)
+    # Garante que o bot só suba se a API estiver de pé
+    depends_on:
+      evolution-api:
+        condition: service_healthy
+    
     ports:
       - "${PORT:-8000}:8000"
     
-    # Carrega variáveis
+    # Carrega variáveis do arquivo .env
     env_file:
       - .env
     
-    # VOLUME (CRÍTICO PARA DEV):
-    # Espelha sua pasta local 'app' para dentro do container.
-    # Assim, qualquer alteração no código reinicia o servidor automaticamente.
+    # Sobrescreve URL para usar rede interna do Docker
+    environment:
+      - EVOLUTION_API_URL=http://evolution-api:8080
+    
+    # Hot-reload para desenvolvimento
     volumes:
       - ./app:/app/app:ro
     
-    # Comando com --reload ativado para desenvolvimento
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - voice_sdr_network
     
-    # Política de Reinício
-    restart: unless-stopped
-    
-    # Logs Rotativos (SRE)
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-    # Healthcheck (Redundância para o Dockerfile)
-    # Garante que o container só receba tráfego quando o FastAPI estiver 100%
-    healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
-    # Limites de Hardware (Segurança do Gemini)
-    # 1GB é o mínimo seguro para rodar FFmpeg + FastAPI + Gemini Client
+    # Limites de Recursos (Segurança)
     deploy:
       resources:
         limits:
@@ -54,7 +115,6 @@ services:
           cpus: '0.25'
           memory: 256M
 
-# Rede isolada (Opcional, mas boa prática)
 networks:
-  default:
-    name: voice_sdr_network
+  voice_sdr_network:
+    driver: bridge

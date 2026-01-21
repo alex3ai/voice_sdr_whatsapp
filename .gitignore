@@ -64,7 +64,7 @@ logs/
 *.dockerignore
 
 # ========================================
-# Arquivos Temporários
+# Arquivos Temporários & Mídia
 # ========================================
 *.tmp
 *.temp
@@ -85,3 +85,11 @@ htmlcov/
 # ========================================
 Thumbs.db
 .DS_Store
+
+# ========================================
+# Evolution API (DADOS SENSÍVEIS)
+# ========================================
+# Ignora pastas de sessão do WhatsApp para não vazar logins
+evolution_data/
+store/
+instances/
