@@ -25,13 +25,14 @@ class EvolutionService:
     
     async def create_instance(self) -> Dict[str, Any]:
         """
-        Cria uma nova instância ou recupera o QR Code se já existir.
+        Cria uma nova instância do WhatsApp OU busca QR Code se já existir
         
         Returns:
             Dict com status e QR code em base64
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # Primeiro, tenta criar a instância
                 url = f"{self.base_url}/instance/create"
                 
                 payload = {
@@ -41,42 +42,82 @@ class EvolutionService:
                 }
                 
                 response = await client.post(url, json=payload, headers=self.headers)
-                response.raise_for_status()
                 
-                data = response.json()
-                logger.info(f"✓ Instância criada: {self.instance_name}")
+                # Se criar com sucesso
+                if response.status_code in [200, 201]:
+                    data = response.json()
+                    logger.info(f"✓ Instância criada: {self.instance_name}")
+                    return data
                 
-                return data
+                # Se já existe (409), busca o QR Code
+                elif response.status_code == 409:
+                    logger.info(f"ℹ️ Instância '{self.instance_name}' já existe. Buscando QR Code de conexão...")
+                    return await self._fetch_qrcode()
+                
+                else:
+                    response.raise_for_status()
         
         except httpx.HTTPStatusError as e:
-            # FIX: Trata tanto 409 (Conflict) quanto 403 (Forbidden) com mensagem de uso
-            error_msg = e.response.text.lower()
-            if e.response.status_code == 409 or (e.response.status_code == 403 and "already in use" in error_msg):
-                logger.info(f"ℹ️ Instância '{self.instance_name}' já existe. Buscando QR Code de conexão...")
-                return await self.connect_instance()
+            logger.error(f"Erro HTTP ao criar instância: {e.response.status_code} - {e.response.text}")
             
-            logger.error(f"Erro ao criar instância: {e.response.text}")
-            return {"error": str(e)}
+            # Se for 409 (já existe), tenta buscar QR Code
+            if e.response.status_code == 409:
+                return await self._fetch_qrcode()
+            
+            return {"error": str(e), "status_code": e.response.status_code}
         
         except Exception as e:
             logger.error(f"Erro ao criar instância: {e}")
             return {"error": str(e)}
-
-    async def connect_instance(self) -> Dict[str, Any]:
+    
+    async def _fetch_qrcode(self) -> Dict[str, Any]:
         """
-        Busca o QR Code para uma instância que já existe.
-        Endpoint: /instance/connect/{instance}
+        Busca o QR Code de uma instância existente
+        
+        Returns:
+            Dict com QR Code base64
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # Endpoint para conectar e obter QR Code
                 url = f"{self.base_url}/instance/connect/{self.instance_name}"
                 
                 response = await client.get(url, headers=self.headers)
                 response.raise_for_status()
                 
-                return response.json()
+                data = response.json()
+                
+                # Se tiver QR Code na resposta
+                if "qrcode" in data or "base64" in data:
+                    logger.info("✓ QR Code obtido com sucesso!")
+                    return data
+                
+                # Se já estiver conectado
+                if data.get("state") == "open":
+                    logger.info("✅ WhatsApp já está conectado!")
+                    return {"status": "connected", "state": "open"}
+                
+                # Tenta outro endpoint (algumas versões da Evolution usam diferente)
+                logger.debug("Tentando endpoint alternativo para QR Code...")
+                url_alt = f"{self.base_url}/instance/qrcode/{self.instance_name}"
+                
+                response_alt = await client.get(url_alt, headers=self.headers)
+                
+                if response_alt.status_code == 200:
+                    data_alt = response_alt.json()
+                    if "qrcode" in data_alt or "base64" in data_alt:
+                        logger.info("✓ QR Code obtido (endpoint alternativo)!")
+                        return data_alt
+                
+                logger.warning("QR Code não disponível no momento")
+                return {"status": "qr_not_available", "message": "Tente novamente em alguns segundos"}
+        
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erro ao buscar QR Code: {e.response.status_code} - {e.response.text}")
+            return {"error": "qr_fetch_failed", "details": e.response.text}
+        
         except Exception as e:
-            logger.error(f"Erro ao conectar instância existente: {e}")
+            logger.error(f"Erro ao buscar QR Code: {e}")
             return {"error": str(e)}
     
     async def get_connection_state(self) -> Dict[str, Any]:
