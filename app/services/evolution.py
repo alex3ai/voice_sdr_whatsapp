@@ -25,8 +25,7 @@ class EvolutionService:
     
     async def create_instance(self) -> Dict[str, Any]:
         """
-        Cria uma nova instância do WhatsApp
-        Retorna QR Code para conexão
+        Cria uma nova instância ou recupera o QR Code se já existir.
         
         Returns:
             Dict com status e QR code em base64
@@ -50,14 +49,34 @@ class EvolutionService:
                 return data
         
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 409:
-                logger.warning("Instância já existe")
-                return {"status": "already_exists"}
+            # FIX: Trata tanto 409 (Conflict) quanto 403 (Forbidden) com mensagem de uso
+            error_msg = e.response.text.lower()
+            if e.response.status_code == 409 or (e.response.status_code == 403 and "already in use" in error_msg):
+                logger.info(f"ℹ️ Instância '{self.instance_name}' já existe. Buscando QR Code de conexão...")
+                return await self.connect_instance()
+            
             logger.error(f"Erro ao criar instância: {e.response.text}")
             return {"error": str(e)}
         
         except Exception as e:
             logger.error(f"Erro ao criar instância: {e}")
+            return {"error": str(e)}
+
+    async def connect_instance(self) -> Dict[str, Any]:
+        """
+        Busca o QR Code para uma instância que já existe.
+        Endpoint: /instance/connect/{instance}
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                url = f"{self.base_url}/instance/connect/{self.instance_name}"
+                
+                response = await client.get(url, headers=self.headers)
+                response.raise_for_status()
+                
+                return response.json()
+        except Exception as e:
+            logger.error(f"Erro ao conectar instância existente: {e}")
             return {"error": str(e)}
     
     async def get_connection_state(self) -> Dict[str, Any]:
