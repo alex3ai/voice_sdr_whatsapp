@@ -2,10 +2,10 @@ version: '3.8'
 
 services:
   # ========================================
-  # Banco de Dados (Versão Estável/Debian)
+  # Banco de Dados (Postgres Standard)
   # ========================================
   postgres:
-    image: postgres:15  # Mudamos de alpine para standard
+    image: postgres:15
     container_name: evolution_postgres
     restart: unless-stopped
     environment:
@@ -16,6 +16,14 @@ services:
       - ./evolution_data/postgres:/var/lib/postgresql/data
     networks:
       - voice_sdr_network
+    
+    # --- VOLTAMOS COM O HEALTHCHECK (Agora seguro) ---
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s # Dá 20s de folga pro Windows antes de cobrar
 
   # ========================================
   # Evolution API v2
@@ -24,8 +32,11 @@ services:
     image: atendai/evolution-api:v2.1.1
     container_name: evolution_whatsapp
     restart: unless-stopped
+    
+    # --- SÓ INICIA SE O BANCO ESTIVER PRONTO ---
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     
     ports:
       - "8080:8080"
@@ -33,9 +44,9 @@ services:
     environment:
       - SERVER_URL=http://localhost:8080
       - DOCKER_ENV=true
-      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
+      - AUTHENTICATION_API_KEY=123456
       
-      # Banco de Dados
+      # Configuração do Banco
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
@@ -50,7 +61,7 @@ services:
       - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
       - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
       
-      # Performance Tuning (Desativando o inútil)
+      # Performance
       - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
       - WEBHOOK_EVENTS_MESSAGES_UPDATE=false
       - WEBHOOK_EVENTS_MESSAGES_DELETE=false
@@ -92,6 +103,7 @@ services:
       - .env
     environment:
       - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=123456
     volumes:
       - ./app:/app/app:ro
     networks:
