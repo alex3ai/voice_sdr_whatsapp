@@ -2,44 +2,61 @@ version: '3.8'
 
 services:
   # ========================================
+  # Banco de Dados (Obrigatório na V2)
+  # ========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: evolution_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution
+      - POSTGRES_DB=evolution
+    volumes:
+      - ./evolution_data/postgres:/var/lib/postgresql/data
+    networks:
+      - voice_sdr_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ========================================
   # Evolution API v2 (Gateway WhatsApp)
   # ========================================
   evolution-api:
     image: atendai/evolution-api:v2.1.1
     container_name: evolution_whatsapp
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     
-    # Exposição de porta (Apenas para gestão, o bot fala via rede interna)
     ports:
       - "8080:8080"
     
     environment:
-      # --- Servidor ---
       - SERVER_URL=http://localhost:8080
       - DOCKER_ENV=true
-      
-      # --- Segurança (Chave Global) ---
-      # Esta chave protege a API de comandos não autorizados
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
       
-      # --- Banco de Dados (Modo Leve/Arquivo) ---
-      - DATABASE_ENABLED=false
+      # --- CONFIGURAÇÃO DO BANCO (Postgres) ---
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
       - DATABASE_SAVE_DATA_INSTANCE=true
-      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
       
-      # --- Webhooks (Onde o bot mora) ---
+      # --- Webhooks ---
       - WEBHOOK_GLOBAL_ENABLED=true
-      # Nota: Usamos o nome do container 'sdr-bot' para comunicação interna
       - WEBHOOK_GLOBAL_URL=http://sdr-bot:8000/webhook/evolution
       - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
-      
-      # --- Filtro de Eventos (Performance) ---
-      # Ativamos APENAS o necessário para economizar CPU
+      - WEBHOOK_EVENTS_QRCODE_UPDATED=true
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
+      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
+      # Otimização: Desativar eventos inúteis
       - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
-      - WEBHOOK_EVENTS_QRCODE_UPDATED=true       # Para ler o QR Code
-      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true      # Para receber mensagens
-      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true    # Para saber se caiu
-      # Desativando todo o resto para evitar ruído
       - WEBHOOK_EVENTS_MESSAGES_UPDATE=false
       - WEBHOOK_EVENTS_MESSAGES_DELETE=false
       - WEBHOOK_EVENTS_SEND_MESSAGE=false
@@ -51,13 +68,12 @@ services:
       - WEBHOOK_EVENTS_CHATS_UPSERT=false
       - WEBHOOK_EVENTS_CHATS_UPDATE=false
       - WEBHOOK_EVENTS_GROUPS_UPSERT=false
-      - WEBHOOK_EVENTS_MEDIA_MESSAGE=false # O UPSERT já traz a mídia
+      - WEBHOOK_EVENTS_MEDIA_MESSAGE=false
       
-      # --- Logs (Silencioso em Produção) ---
+      # --- Logs ---
       - LOG_LEVEL=ERROR
       - LOG_BAILEYS=error
     
-    # Persistência da Sessão do WhatsApp
     volumes:
       - ./evolution_data/instances:/evolution/instances
       - ./evolution_data/store:/evolution/store
@@ -65,12 +81,12 @@ services:
     networks:
       - voice_sdr_network
     
-    # Healthcheck da API
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ========================================
   # Voice SDR Bot (Nosso Backend Python)
@@ -81,39 +97,24 @@ services:
       dockerfile: Dockerfile
     container_name: voice_sdr_bot
     restart: unless-stopped
-    
-    # Garante que o bot só suba se a API estiver de pé
     depends_on:
       evolution-api:
         condition: service_healthy
-    
     ports:
       - "${PORT:-8000}:8000"
-    
-    # Carrega variáveis do arquivo .env
     env_file:
       - .env
-    
-    # Sobrescreve URL para usar rede interna do Docker
     environment:
       - EVOLUTION_API_URL=http://evolution-api:8080
-    
-    # Hot-reload para desenvolvimento
     volumes:
       - ./app:/app/app:ro
-    
     networks:
       - voice_sdr_network
-    
-    # Limites de Recursos (Segurança)
     deploy:
       resources:
         limits:
           cpus: '1.0'
           memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
 
 networks:
   voice_sdr_network:
