@@ -1,144 +1,259 @@
 """
-Serviço de integração com Evolution API V2.
-Gerencia instâncias, envio e recebimento de mensagens.
+Serviço de integração com Evolution API V2
+Documentação: https://doc.evolution-api.com/
 """
 import httpx
+import asyncio
 import base64
-import aiofiles
 from typing import Optional, Dict, Any
+from pathlib import Path
 from app.config import settings
 from app.utils.files import get_temp_filename, get_file_size_mb
-from app.utils.logger import logger
+from app.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
 
 class EvolutionService:
-    """
-    Gerenciador de comunicação com a Evolution API.
-    """
+    """Gerenciador de comunicação com a Evolution API"""
     
     def __init__(self):
         self.base_url = settings.evolution_api_url
         self.instance_name = settings.evolution_instance_name
         self.headers = settings.evolution_headers
-        # Timeout maior para operações de mídia
         self.timeout = httpx.Timeout(settings.download_timeout, connect=10.0)
-
+    
     async def create_instance(self) -> Dict[str, Any]:
         """
-        Cria/Conecta a instância na Evolution API.
-        Retorna o QR Code (base64) se necessário.
-        """
-        url = f"{self.base_url}/instance/create"
-        payload = {
-            "instanceName": self.instance_name,
-            "qrcode": True,
-            "integration": "WHATSAPP-BAILEYS"
-        }
+        Cria uma nova instância do WhatsApp
+        Retorna QR Code para conexão
         
+        Returns:
+            Dict com status e QR code em base64
+        """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                logger.info(f"Criando instância '{self.instance_name}'...")
-                resp = await client.post(url, json=payload, headers=self.headers)
+                url = f"{self.base_url}/instance/create"
                 
-                # Se já existe (409), tenta reconectar para pegar status
-                if resp.status_code == 409:
-                    logger.info("Instância já existe. Verificando conexão...")
-                    return await self.get_connection_state()
+                payload = {
+                    "instanceName": self.instance_name,
+                    "qrcode": True,
+                    "integration": "WHATSAPP-BAILEYS"
+                }
                 
-                resp.raise_for_status()
-                return resp.json()
+                response = await client.post(url, json=payload, headers=self.headers)
+                response.raise_for_status()
+                
+                data = response.json()
+                logger.info(f"✓ Instância criada: {self.instance_name}")
+                
+                return data
+        
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                logger.warning("Instância já existe")
+                return {"status": "already_exists"}
+            logger.error(f"Erro ao criar instância: {e.response.text}")
+            return {"error": str(e)}
+        
         except Exception as e:
             logger.error(f"Erro ao criar instância: {e}")
             return {"error": str(e)}
-
+    
     async def get_connection_state(self) -> Dict[str, Any]:
-        """Checa se o WhatsApp está conectado."""
-        url = f"{self.base_url}/instance/connectionState/{self.instance_name}"
+        """
+        Verifica o status da conexão
+        
+        Returns:
+            Dict com estado da conexão
+        """
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(url, headers=self.headers)
-                return resp.json()
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                url = f"{self.base_url}/instance/connectionState/{self.instance_name}"
+                
+                response = await client.get(url, headers=self.headers)
+                response.raise_for_status()
+                
+                return response.json()
+        
         except Exception as e:
-            logger.warning(f"Não foi possível checar estado: {e}")
-            return {"state": "down"}
-
+            logger.error(f"Erro ao obter estado: {e}")
+            return {"state": "error", "error": str(e)}
+    
     async def download_media(self, message_data: Dict[str, Any]) -> Optional[str]:
         """
-        Baixa o áudio de uma mensagem recebida.
-        A Evolution v2 precisa do objeto 'message' completo para achar a mídia.
-        """
-        download_url = f"{self.base_url}/instance/downloadMedia/{self.instance_name}"
+        Baixa mídia de uma mensagem
         
-        # Payload específico da Evolution V2
-        payload = {
-            "message": message_data,
-            "convertToMp4": False
-        }
-
+        Args:
+            message_data: Dados da mensagem do webhook
+        
+        Returns:
+            Caminho do arquivo baixado ou None
+        """
         try:
+            # A Evolution API já envia o base64 do áudio direto no webhook
+            # em message.message.audioMessage.ptt (para áudio PTT)
+            
+            audio_msg = message_data.get("message", {}).get("audioMessage")
+            
+            if not audio_msg:
+                logger.error("Mensagem não contém áudio")
+                return None
+            
+            # Pega a URL de download da mídia
+            media_url = audio_msg.get("url")
+            mime_type = audio_msg.get("mimetype", "audio/ogg")
+            
+            if not media_url:
+                logger.error("URL de mídia não encontrada")
+                return None
+            
+            # Baixa o arquivo
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                logger.info("Baixando mídia da Evolution API...")
-                resp = await client.post(download_url, json=payload, headers=self.headers)
-                resp.raise_for_status()
+                logger.info("Baixando arquivo de mídia...")
                 
-                # Detecta extensão (Evolution geralmente retorna o binário direto)
-                # Assumimos OGG se não vier header explícito, pois é o padrão de voz
-                content_type = resp.headers.get("content-type", "")
-                ext = ".mp3" if "mpeg" in content_type else ".ogg"
+                # A Evolution expõe endpoint para download
+                download_url = f"{self.base_url}/instance/downloadMedia/{self.instance_name}"
                 
-                filename = get_temp_filename(ext, prefix="evo_in")
+                payload = {
+                    "message": message_data
+                }
                 
-                # Salva usando I/O não-bloqueante
-                async with aiofiles.open(filename, "wb") as f:
-                    await f.write(resp.content)
+                response = await client.post(
+                    download_url,
+                    json=payload,
+                    headers=self.headers
+                )
+                response.raise_for_status()
                 
-                size = get_file_size_mb(filename)
-                logger.info(f"Mídia baixada: {size:.2f} MB")
-                return str(filename)
-
-        except Exception as e:
-            logger.error(f"Falha no download da mídia: {e}")
-            return None
-
-    async def send_audio(self, number: str, audio_path: str) -> bool:
-        """
-        Envia áudio (PTT) lendo o arquivo local e convertendo para Base64.
-        """
-        url = f"{self.base_url}/message/sendWhatsAppAudio/{self.instance_name}"
+                # Salva localmente
+                extension = self._get_extension_from_mime(mime_type)
+                temp_file = get_temp_filename(extension, prefix="evolution_download")
+                
+                # A resposta pode vir em base64 ou bytes
+                content = response.content
+                
+                with open(temp_file, "wb") as f:
+                    f.write(content)
+                
+                file_size = get_file_size_mb(temp_file)
+                logger.info(f"✓ Mídia baixada: {file_size:.2f} MB")
+                
+                return temp_file
         
+        except Exception as e:
+            logger.error(f"Erro ao baixar mídia: {e}", exc_info=True)
+            return None
+    
+    async def send_audio(self, phone_number: str, audio_path: str, quoted_msg_id: Optional[str] = None) -> bool:
+        """
+        Envia áudio (nota de voz) via WhatsApp
+        
+        Args:
+            phone_number: Número no formato 5511999999999
+            audio_path: Caminho do arquivo de áudio local
+            quoted_msg_id: ID da mensagem para responder (opcional)
+        
+        Returns:
+            True se enviado com sucesso
+        """
         try:
-            # 1. Leitura Async do Arquivo
-            async with aiofiles.open(audio_path, "rb") as f:
-                file_content = await f.read()
-                audio_b64 = base64.b64encode(file_content).decode("utf-8")
-
-            # 2. Envio
-            payload = {
-                "number": number,
-                "audioBase64": audio_b64,
-                "delay": 1200 # Delay humano (1.2s)
-            }
+            # Converte áudio para base64
+            with open(audio_path, "rb") as audio_file:
+                audio_base64 = base64.b64encode(audio_file.read()).decode('utf-8')
             
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(url, json=payload, headers=self.headers)
-                resp.raise_for_status()
-                logger.info(f"✅ Áudio enviado para {number}")
+                url = f"{self.base_url}/message/sendWhatsAppAudio/{self.instance_name}"
+                
+                payload = {
+                    "number": phone_number,
+                    "audioBase64": audio_base64,
+                    "delay": 1200  # Delay para parecer mais humano (milissegundos)
+                }
+                
+                # Se for resposta a uma mensagem
+                if quoted_msg_id:
+                    payload["quoted"] = {
+                        "key": {
+                            "id": quoted_msg_id
+                        }
+                    }
+                
+                logger.info(f"Enviando áudio para {phone_number[-4:]}...")
+                
+                response = await client.post(url, json=payload, headers=self.headers)
+                response.raise_for_status()
+                
+                logger.info("✓ Áudio enviado com sucesso!")
                 return True
-
-        except Exception as e:
-            logger.error(f"❌ Erro ao enviar áudio: {e}")
-            return False
-
-    async def send_text(self, number: str, text: str) -> bool:
-        """Helper para enviar texto (útil para mensagens de erro/fallback)."""
-        url = f"{self.base_url}/message/sendText/{self.instance_name}"
-        payload = {"number": number, "text": text, "delay": 2000}
         
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.post(url, json=payload, headers=self.headers)
-                return True
-        except:
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erro HTTP ao enviar áudio: {e.response.status_code} - {e.response.text}")
             return False
+        
+        except Exception as e:
+            logger.error(f"Erro ao enviar áudio: {e}", exc_info=True)
+            return False
+    
+    async def send_text(self, phone_number: str, text: str) -> bool:
+        """
+        Envia mensagem de texto
+        
+        Args:
+            phone_number: Número no formato 5511999999999
+            text: Texto da mensagem
+        
+        Returns:
+            True se enviado com sucesso
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                url = f"{self.base_url}/message/sendText/{self.instance_name}"
+                
+                payload = {
+                    "number": phone_number,
+                    "text": text,
+                    "delay": 1200
+                }
+                
+                response = await client.post(url, json=payload, headers=self.headers)
+                response.raise_for_status()
+                
+                logger.info("✓ Texto enviado!")
+                return True
+        
+        except Exception as e:
+            logger.error(f"Erro ao enviar texto: {e}")
+            return False
+    
+    async def delete_instance(self) -> bool:
+        """Deleta a instância (desconecta do WhatsApp)"""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                url = f"{self.base_url}/instance/delete/{self.instance_name}"
+                
+                response = await client.delete(url, headers=self.headers)
+                response.raise_for_status()
+                
+                logger.info("✓ Instância deletada")
+                return True
+        
+        except Exception as e:
+            logger.error(f"Erro ao deletar instância: {e}")
+            return False
+    
+    @staticmethod
+    def _get_extension_from_mime(mime_type: str) -> str:
+        """Mapeia MIME type para extensão de arquivo"""
+        mime_map = {
+            "audio/ogg": ".ogg",
+            "audio/ogg; codecs=opus": ".ogg",
+            "audio/mpeg": ".mp3",
+            "audio/mp4": ".m4a",
+            "audio/aac": ".aac"
+        }
+        return mime_map.get(mime_type, ".ogg")
 
-# Singleton
+
+# Singleton do serviço
 evolution_service = EvolutionService()

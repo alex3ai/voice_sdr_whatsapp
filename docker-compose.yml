@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   # ========================================
-  # 1. Redis (Cache e Sessão - NOVO)
+  # 1. Redis
   # ========================================
   redis:
     image: redis:alpine
@@ -19,7 +19,7 @@ services:
       retries: 5
 
   # ========================================
-  # 2. Banco de Dados (Postgres)
+  # 2. Postgres
   # ========================================
   postgres:
     image: postgres:15
@@ -37,11 +37,11 @@ services:
       test: ["CMD-SHELL", "pg_isready -U evolution"]
       interval: 10s
       timeout: 5s
-      retries: 10       
-      start_period: 60s # Tempo estendido para o Windows
+      retries: 10
+      start_period: 60s
 
   # ========================================
-  # 3. Evolution API v2
+  # 3. Evolution API v2 (Blindada)
   # ========================================
   evolution-api:
     image: atendai/evolution-api:v2.1.1
@@ -53,6 +53,11 @@ services:
       redis:
         condition: service_healthy
     
+    # --- FIX 1: DNS Google (Obrigatório) ---
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    
     ports:
       - "8080:8080"
     
@@ -61,11 +66,11 @@ services:
       - DOCKER_ENV=true
       - AUTHENTICATION_API_KEY=123456
       
-      # --- CONFIGURAÇÃO REDIS (NOVO) ---
+      # Redis
       - CACHE_REDIS_ENABLED=true
       - CACHE_REDIS_URI=redis://:123456@redis:6379/0
       
-      # Banco de Dados
+      # Banco
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
@@ -80,23 +85,13 @@ services:
       - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
       - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
       
-      # Performance
-      - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
-      - WEBHOOK_EVENTS_MESSAGES_UPDATE=false
-      - WEBHOOK_EVENTS_MESSAGES_DELETE=false
-      - WEBHOOK_EVENTS_SEND_MESSAGE=false
-      - WEBHOOK_EVENTS_CONTACTS_SET=false
-      - WEBHOOK_EVENTS_CONTACTS_UPSERT=false
-      - WEBHOOK_EVENTS_CONTACTS_UPDATE=false
-      - WEBHOOK_EVENTS_PRESENCE_UPDATE=false
-      - WEBHOOK_EVENTS_CHATS_SET=false
-      - WEBHOOK_EVENTS_CHATS_UPSERT=false
-      - WEBHOOK_EVENTS_CHATS_UPDATE=false
-      - WEBHOOK_EVENTS_GROUPS_UPSERT=false
-      - WEBHOOK_EVENTS_MEDIA_MESSAGE=false
+      # Configs Extras
+      - LOG_LEVEL=INFO
+      - DEL_INSTANCE=false
       
-      - LOG_LEVEL=ERROR
-      - LOG_BAILEYS=error
+      # Tuning para evitar timeout
+      - QRCODE_LIMIT=30
+      - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
     
     volumes:
       - ./evolution_data/instances:/evolution/instances
@@ -133,6 +128,11 @@ services:
           cpus: '1.0'
           memory: 1G
 
+# ========================================
+# FIX 2: Correção de MTU para Rede
+# ========================================
 networks:
   voice_sdr_network:
     driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1400  # Reduz tamanho do pacote para passar na rede
