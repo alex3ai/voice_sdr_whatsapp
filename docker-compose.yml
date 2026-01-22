@@ -2,10 +2,10 @@ version: '3.8'
 
 services:
   # ========================================
-  # Banco de Dados (Obrigatório na V2)
+  # Banco de Dados (Versão Estável/Debian)
   # ========================================
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15  # Mudamos de alpine para standard
     container_name: evolution_postgres
     restart: unless-stopped
     environment:
@@ -16,22 +16,16 @@ services:
       - ./evolution_data/postgres:/var/lib/postgresql/data
     networks:
       - voice_sdr_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evolution"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
   # ========================================
-  # Evolution API v2 (Gateway WhatsApp)
+  # Evolution API v2
   # ========================================
   evolution-api:
     image: atendai/evolution-api:v2.1.1
     container_name: evolution_whatsapp
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      - postgres
     
     ports:
       - "8080:8080"
@@ -41,21 +35,22 @@ services:
       - DOCKER_ENV=true
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
       
-      # --- CONFIGURAÇÃO DO BANCO (Postgres) ---
+      # Banco de Dados
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
       - DATABASE_SAVE_DATA_INSTANCE=true
       - DATABASE_SAVE_DATA_NEW_MESSAGE=true
       
-      # --- Webhooks ---
+      # Webhooks
       - WEBHOOK_GLOBAL_ENABLED=true
       - WEBHOOK_GLOBAL_URL=http://sdr-bot:8000/webhook/evolution
       - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
       - WEBHOOK_EVENTS_QRCODE_UPDATED=true
       - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
       - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
-      # Otimização: Desativar eventos inúteis
+      
+      # Performance Tuning (Desativando o inútil)
       - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
       - WEBHOOK_EVENTS_MESSAGES_UPDATE=false
       - WEBHOOK_EVENTS_MESSAGES_DELETE=false
@@ -70,7 +65,6 @@ services:
       - WEBHOOK_EVENTS_GROUPS_UPSERT=false
       - WEBHOOK_EVENTS_MEDIA_MESSAGE=false
       
-      # --- Logs ---
       - LOG_LEVEL=ERROR
       - LOG_BAILEYS=error
     
@@ -80,16 +74,9 @@ services:
     
     networks:
       - voice_sdr_network
-    
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
 
   # ========================================
-  # Voice SDR Bot (Nosso Backend Python)
+  # Voice SDR Bot
   # ========================================
   sdr-bot:
     build: 
@@ -98,8 +85,7 @@ services:
     container_name: voice_sdr_bot
     restart: unless-stopped
     depends_on:
-      evolution-api:
-        condition: service_healthy
+      - evolution-api
     ports:
       - "${PORT:-8000}:8000"
     env_file:
