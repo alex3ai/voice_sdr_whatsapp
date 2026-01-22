@@ -2,7 +2,24 @@ version: '3.8'
 
 services:
   # ========================================
-  # Banco de Dados (Postgres Standard)
+  # 1. Redis (Cache e Sessão - NOVO)
+  # ========================================
+  redis:
+    image: redis:alpine
+    container_name: evolution_redis
+    command: redis-server --appendonly yes --requirepass 123456
+    volumes:
+      - ./evolution_data/redis:/data
+    networks:
+      - voice_sdr_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "123456", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ========================================
+  # 2. Banco de Dados (Postgres)
   # ========================================
   postgres:
     image: postgres:15
@@ -16,26 +33,24 @@ services:
       - ./evolution_data/postgres:/var/lib/postgresql/data
     networks:
       - voice_sdr_network
-    
-    # --- VOLTAMOS COM O HEALTHCHECK (Agora seguro) ---
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U evolution"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 20s # Dá 20s de folga pro Windows antes de cobrar
+      retries: 10       
+      start_period: 60s # Tempo estendido para o Windows
 
   # ========================================
-  # Evolution API v2
+  # 3. Evolution API v2
   # ========================================
   evolution-api:
     image: atendai/evolution-api:v2.1.1
     container_name: evolution_whatsapp
     restart: unless-stopped
-    
-    # --- SÓ INICIA SE O BANCO ESTIVER PRONTO ---
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     
     ports:
@@ -46,7 +61,11 @@ services:
       - DOCKER_ENV=true
       - AUTHENTICATION_API_KEY=123456
       
-      # Configuração do Banco
+      # --- CONFIGURAÇÃO REDIS (NOVO) ---
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://:123456@redis:6379/0
+      
+      # Banco de Dados
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
@@ -87,7 +106,7 @@ services:
       - voice_sdr_network
 
   # ========================================
-  # Voice SDR Bot
+  # 4. Voice SDR Bot
   # ========================================
   sdr-bot:
     build: 
