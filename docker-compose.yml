@@ -2,7 +2,31 @@ version: '3.8'
 
 services:
   # ========================================
-  # 1. Redis
+  # 1. Banco de Dados (Agora com Volume Interno)
+  # ========================================
+  postgres:
+    image: postgres:15
+    container_name: evolution_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution
+      - POSTGRES_DB=evolution
+    volumes:
+      # MUDANÇA CRÍTICA: Usando volume interno (rápido e seguro no Windows)
+      - evolution_postgres_data:/var/lib/postgresql/data
+    networks:
+      - voice_sdr_network
+    # Healthcheck mais tolerante para a primeira inicialização
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  # ========================================
+  # 2. Redis
   # ========================================
   redis:
     image: redis:alpine
@@ -19,32 +43,10 @@ services:
       retries: 5
 
   # ========================================
-  # 2. Postgres
-  # ========================================
-  postgres:
-    image: postgres:15
-    container_name: evolution_postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=evolution
-      - POSTGRES_PASSWORD=evolution
-      - POSTGRES_DB=evolution
-    volumes:
-      - ./evolution_data/postgres:/var/lib/postgresql/data
-    networks:
-      - voice_sdr_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evolution"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-
-  # ========================================
-  # 3. Evolution API v2 (Blindada)
+  # 3. Evolution API (Configuração BLINDADA)
   # ========================================
   evolution-api:
-    image: atendai/evolution-api:v2.1.1
+    image: evoapicloud/evolution-api:v2.3.0
     container_name: evolution_whatsapp
     restart: unless-stopped
     depends_on:
@@ -52,56 +54,54 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    
-    # --- FIX 1: DNS Google (Obrigatório) ---
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    
+      - 1.1.1.1
+    shm_size: '2gb' 
     ports:
       - "8080:8080"
-    
     environment:
       - SERVER_URL=http://localhost:8080
       - DOCKER_ENV=true
       - AUTHENTICATION_API_KEY=123456
+      - LOG_LEVEL=ERROR
+      - LOG_BAILEYS=error
       
-      # Redis
+      # Banco e Cache
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution?schema=public&connection_limit=5
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
       - CACHE_REDIS_ENABLED=true
       - CACHE_REDIS_URI=redis://:123456@redis:6379/0
       
-      # Banco
-      - DATABASE_ENABLED=true
-      - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
-      - DATABASE_SAVE_DATA_INSTANCE=true
-      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      # WebSocket 
+      - WEBSOCKET_MAX_PAYLOAD=104857600
+      - WEBSOCKET_PING_INTERVAL=20000
+      - WEBSOCKET_PONG_TIMEOUT=60000
       
-      # Webhooks
+      # Webhook
       - WEBHOOK_GLOBAL_ENABLED=true
-      - WEBHOOK_GLOBAL_URL=http://sdr-bot:8000/webhook/evolution
-      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
-      - WEBHOOK_EVENTS_QRCODE_UPDATED=true
-      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
-      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
+      - WEBHOOK_GLOBAL_URL=http://voice_sdr_bot:8000/webhook/evolution
+      - WEBHOOK_EVENTS=MESSAGES_UPSERT,CONNECTION_UPDATE,QRCODE_UPDATED
       
-      # Configs Extras
-      - LOG_LEVEL=INFO
+      # Chrome
+      - CONFIG_SESSION_PHONE_CLIENT=VoiceSDR
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - CHROME_ARGS=--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox
       - DEL_INSTANCE=false
-      
-      # Tuning para evitar timeout
       - QRCODE_LIMIT=30
-      - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
-    
+      
     volumes:
-      - ./evolution_data/instances:/evolution/instances
-      - ./evolution_data/store:/evolution/store
-    
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
     networks:
       - voice_sdr_network
 
   # ========================================
-  # 4. Voice SDR Bot
+  # 4. Bot (Sua Aplicação)
   # ========================================
   sdr-bot:
     build: 
@@ -110,7 +110,7 @@ services:
     container_name: voice_sdr_bot
     restart: unless-stopped
     depends_on:
-      - evolution-api
+      - evolution-api 
     ports:
       - "${PORT:-8000}:8000"
     env_file:
@@ -118,21 +118,17 @@ services:
     environment:
       - EVOLUTION_API_URL=http://evolution-api:8080
       - EVOLUTION_API_KEY=123456
-    volumes:
-      - ./app:/app/app:ro
     networks:
       - voice_sdr_network
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
 
-# ========================================
-# FIX 2: Correção de MTU para Rede
-# ========================================
 networks:
   voice_sdr_network:
     driver: bridge
-    driver_opts:
-      com.docker.network.driver.mtu: 1400  # Reduz tamanho do pacote para passar na rede
+
+# ========================================
+# Definição dos Volumes Internos
+# ========================================
+volumes:
+  evolution_instances:
+  evolution_store:
+  evolution_postgres_data: # Volume novo para o Banco
