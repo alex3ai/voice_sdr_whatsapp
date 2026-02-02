@@ -1,80 +1,76 @@
-# Resumo da Tentativa de Debug - Voice SDR WhatsApp
+# Resumo Abrangente do Projeto - Voice SDR WhatsApp
 
-Este documento resume todas as etapas, logs e comandos utilizados na tentativa de resolver os problemas com a aplicação `voice_sdr_whatsapp`.
-
-## Problema Inicial
-
-A aplicação apresentava dois erros principais:
-1.  Um `Internal Server Error (500)` ao receber um webhook de teste na sua própria API (`http://localhost:8000/webhook/evolution`).
-2.  Um `Not Found (404)` ao tentar configurar a URL do webhook na Evolution API (`http://localhost:8080`).
+Este documento fornece um resumo completo do estado atual e da arquitetura da aplicação `voice-sdr-whatsapp`, além de preservar o histórico de depuração.
 
 ---
 
-## 1. Análise do "Internal Server Error" (500)
+## 1. Visão Geral da Arquitetura
 
-Este problema foi identificado como a **prioridade 1** e foi **resolvido**.
+A aplicação é um sistema `dockerizado` composto por 3 serviços principais que se comunicam em uma rede privada:
 
-### Investigação e Solução
+1.  **`sdr-bot` (Esta Aplicação):**
+    *   **Tecnologia:** FastAPI (Python) com `uvicorn`.
+    *   **Responsabilidade:** Orquestrar todo o fluxo. Recebe webhooks da Evolution API, gerencia a lógica de negócios e se comunica com os serviços de IA e TTS.
+    *   **Interface:** Expõe endpoints para conexão (`/qrcode`), status (`/status`) e recebimento de eventos (`/webhook/evolution`).
 
-1.  **Análise do Código:** A análise do arquivo `voice_sdr_whatsapp/app/main.py` revelou que o endpoint do webhook (`/webhook/evolution`) recebia a requisição como um objeto `Request` genérico e lia o JSON manualmente (`data = await request.json()`).
-2.  **Hipótese:** A ausência da validação automática do Pydantic do FastAPI estava causando uma exceção não tratada.
-3.  **Aplicação da Correção:** O endpoint em `app/main.py` foi modificado para receber o payload diretamente como um modelo Pydantic (`payload: EvolutionWebhook`), ativando a validação automática do FastAPI.
+2.  **`evolution-api`:**
+    *   **Tecnologia:** Imagem Docker `atendai/evolution-api:latest`.
+    *   **Responsabilidade:** Atuar como um gateway para o WhatsApp. Gerencia a conexão (via QR Code), envio e recebimento de mensagens.
+    *   **Comunicação:** Notifica o `sdr-bot` sobre novos eventos (mensagens, status de conexão) através de webhooks.
 
-### Status
-✅ **Resolvido.** A aplicação agora está mais robusta e irá retornar um erro `422 Unprocessable Entity` com detalhes caso o formato do webhook esteja incorreto.
+3.  **`postgres` e `redis`:**
+    *   **Tecnologia:** Imagens oficiais do PostgreSQL e Redis.
+    *   **Responsabilidade:** Fornecer persistência e cache para a `evolution-api`, armazenando sessões, mensagens e outros dados.
 
----
+## 2. Fluxo de Processamento de Áudio (Pipeline)
 
-## 2. Análise do "Not Found" (404) na API da Evolution
+Quando um usuário envia uma mensagem de áudio para o número conectado:
 
-Este problema foi **resolvido**. O objetivo era configurar o webhook da instância `voice_sdr_v4`.
+1.  **Recepção (Evolution API):** A `evolution-api` recebe o áudio e dispara um webhook do tipo `messages.upsert` para o `sdr-bot`.
 
-### Investigação e Solução
+2.  **Validação e Delegação (FastAPI):**
+    *   O endpoint `/webhook/evolution` em `app/main.py` recebe a notificação.
+    *   O payload é validado pelo modelo Pydantic `EvolutionWebhook`.
+    *   Para evitar bloqueios, o processamento é delegado para uma tarefa em background (`process_audio_pipeline`).
 
-Após múltiplas tentativas de configurar o webhook via endpoints da API (`/instance/setWebhook`, `/webhook/instance`, `/webhook/set`), todas resultando em erro `404 Not Found`, a investigação mudou de foco.
+3.  **Download do Áudio (Serviço Evolution):**
+    *   O `evolution_service` baixa o áudio (que vem no formato `.ogg`) da `evolution-api` e o salva em um arquivo temporário.
 
-1.  **Análise do `docker-compose.yml`:** Uma análise mais detalhada do arquivo `docker-compose.yml` revelou a verdadeira forma de configurar o webhook para a versão da API em uso (`atendai/evolution-api:latest`).
-2.  **Hipótese:** A configuração do webhook não é feita via API, mas sim através de **variáveis de ambiente** no `docker-compose.yml`.
-3.  **Aplicação da Correção:**
-    *   O `docker-compose.yml` foi modificado para incluir as seguintes variáveis de ambiente no serviço `evolution-api`:
-        ```yaml
-        # Webhook Configuration
-        - WEBHOOK_GLOBAL_ENABLED=true
-        - WEBHOOK_GLOBAL_URL=http://voice_sdr_bot:8000/webhook/evolution
-        - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
-        - WEBHOOK_EVENTS=MESSAGES_UPSERT,CONNECTION_UPDATE,QRCODE_UPDATED
-        ```
-    *   O serviço `evolution-api` foi recriado com o comando `docker-compose up -d --force-recreate evolution-api` para aplicar as novas variáveis de ambiente.
+4.  **Processamento de IA (Serviço Brain):**
+    *   O `brain_service` envia o arquivo de áudio para a **API do Google Gemini**.
+    *   A IA transcreve o áudio, analisa a pergunta e gera uma resposta em texto, seguindo as diretrizes do `SYSTEM_PROMPT`.
+    *   O serviço possui uma lógica de **fallback**: se o modelo principal falhar, ele tenta um modelo secundário.
 
-### Status
-✅ **Resolvido.** A configuração do webhook agora é feita de forma declarativa no `docker-compose.yml`, eliminando a necessidade de chamadas de API para este fim.
+5.  **Síntese de Voz (Serviço Voice):**
+    *   O `voice_service` recebe o texto gerado pela IA.
+    *   Ele utiliza a biblioteca `edge-tts` para converter o texto em um áudio `.mp3` com a voz neural configurada.
+    *   Em seguida, usa o **FFmpeg** para converter o `.mp3` para o formato `.ogg` com codec Opus, otimizado para o WhatsApp.
 
----
+6.  **Envio da Resposta (Serviço Evolution):**
+    *   O `evolution_service` envia o áudio `.ogg` finalizado de volta para o usuário, respondendo à mensagem original.
 
-## 3. Análise do Loop de Conexão e Timeout
-
-Após as correções anteriores, a aplicação entrou em um novo estado de erro, caracterizado por um loop de criação e falha da instância, resultando em timeouts.
-
-### Investigação e Solução
-
-1.  **Sintoma 1: Loop de Criação de Instância (403 Forbidden)**
-    *   **Análise:** Os logs mostraram que a aplicação tentava criar uma instância, falhava com um erro `403 - Forbidden` (nome já em uso), deletava a instância e tentava recriar imediatamente.
-    *   **Hipótese:** O tempo de espera de 2 segundos após a deleção era insuficiente para a API da Evolution processar a remoção completamente, causando uma condição de corrida (*race condition*).
-    *   **Solução:** A lógica em `app/services/evolution.py` foi substituída por um mecanismo de retentativa mais robusto. Agora, a aplicação tenta recriar a instância até 3 vezes, com um tempo de espera crescente (5s, 10s, 15s), dando tempo suficiente para a API concluir a operação de exclusão.
-
-2.  **Sintoma 2: Timeout na Conexão (408 Request Time-out)**
-    *   **Análise:** Mesmo com a correção da condição de corrida, os logs da Evolution API mostraram um erro `Timed Out` vindo da biblioteca Baileys (`error in validating connection`). Isso indicava que a conexão com os servidores do WhatsApp estava falhando. Ao mesmo tempo, os logs da nossa aplicação mostravam múltiplas chamadas para `create instance`, sugerindo que o usuário estava recarregando a página `/qrcode` repetidamente.
-    *   **Hipótese:** O problema tinha duas frentes: (A) um problema de conexão subjacente no ambiente Docker da Evolution API e (B) a ausência de um mecanismo para prevenir múltiplas solicitações de criação simultâneas na nossa aplicação.
-    *   **Solução:**
-        *   **Aumento do Timeout:** Para mitigar a lentidão da rede, o timeout para as chamadas de criação de instância em `app/services/evolution.py` foi aumentado para **120 segundos**. Isso dá mais tempo para a Baileys tentar estabelecer a conexão.
-        *   **Bloqueio de Concorrência (*Concurrency Lock*):** Foi implementado um `asyncio.Lock` no endpoint `/qrcode` em `app/main.py`. Isso impede que novas solicitações de criação de instância sejam processadas enquanto uma já estiver em andamento, estabilizando o sistema e fornecendo um feedback claro ao usuário para que aguarde.
-
-### Status
-✅ **Resolvido.** A aplicação está agora mais resiliente a condições de rede lentas e protegida contra condições de corrida e solicitações simultâneas, tornando o processo de conexão muito mais estável.
+7.  **Limpeza:** Todos os arquivos de áudio temporários (`.ogg`, `.mp3`) são automaticamente removidos do sistema.
 
 ---
 
-## Estado Final dos Arquivos
+## 3. Histórico de Depuração (Resolvido)
+
+Esta seção detalha os problemas encontrados e resolvidos durante o desenvolvimento inicial.
+
+### 3.1. Análise do "Internal Server Error" (500)
+✅ **Resolvido.** A causa era a falta de um modelo Pydantic para validar o payload do webhook. A correção foi aplicar o modelo `EvolutionWebhook` no endpoint, permitindo que o FastAPI gerencie a validação automaticamente.
+
+### 3.2. Análise do "Not Found" (404) na API da Evolution
+✅ **Resolvido.** O problema era tentar configurar o webhook via API. A solução foi definir o webhook através de **variáveis de ambiente** no `docker-compose.yml`, que é a abordagem correta para a versão da API em uso.
+
+### 3.3. Análise do Loop de Conexão e Timeout
+✅ **Resolvido.** A aplicação entrava em um loop de `criar -> falhar -> deletar -> recriar` instância. A solução teve duas partes:
+1.  **Remoção da Lógica Agressiva:** Em vez de deletar e recriar, a lógica em `app/main.py` foi simplificada. O método `create_instance` em `app/services/evolution.py` foi ajustado para primeiro tentar criar e, ao receber um erro `403 (Forbidden)`, interpretar que a instância já existe e apenas solicitar a conexão.
+2.  **Implementação de um `asyncio.Lock`:** No endpoint `/qrcode`, foi adicionado um lock para impedir que múltiplas solicitações de criação de QR Code ocorram simultaneamente, estabilizando o processo.
+
+---
+
+## 4. Estado Atual dos Arquivos
 
 Abaixo está o conteúdo dos principais arquivos do projeto no estado atual.
 
@@ -85,7 +81,7 @@ version: '3.8'
 
 services:
   # ========================================
-  # 1. Banco de Dados (CORRIGIDO PARA WINDOWS)
+  # 1. Banco de Dados (Agora com Volume Interno)
   # ========================================
   postgres:
     image: postgres:15
@@ -96,18 +92,20 @@ services:
       - POSTGRES_PASSWORD=evolution
       - POSTGRES_DB=evolution
     volumes:
-      - ./evolution_data/postgres:/var/lib/postgresql/data
+      # MUDANÇA CRÍTICA: Usando volume interno (rápido e seguro no Windows)
+      - evolution_postgres_data:/var/lib/postgresql/data
     networks:
       - voice_sdr_network
+    # Healthcheck mais tolerante para a primeira inicialização
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
-      interval: 15s        # Verifica a cada 15s
-      timeout: 10s         # Espera 10s pela resposta
-      retries: 10          # Tenta 10 vezes (Total ~150s + start_period)
-      start_period: 60s    # DÁ 1 MINUTO DE FOLGA ANTES DE COMEÇAR A CHECAR
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
   # ========================================
-  # 2. Redis (Cache de Sessão)
+  # 2. Redis
   # ========================================
   redis:
     image: redis:alpine
@@ -124,10 +122,10 @@ services:
       retries: 5
 
   # ========================================
-  # 3. Evolution API v2.2.2 (Configurada via Docs)
+  # 3. Evolution API (Configuração BLINDADA)
   # ========================================
   evolution-api:
-    image: atendai/evolution-api:latest
+    image: evoapicloud/evolution-api:v2.3.0
     container_name: evolution_whatsapp
     restart: unless-stopped
     depends_on:
@@ -135,65 +133,49 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    
-    # ⚠️ CRÍTICO PARA WINDOWS: Memória compartilhada para o Chrome não crashar
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     shm_size: '2gb' 
-    
     ports:
-            - "8080:8080"
-          
-          healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost:8080/instance"]
-            interval: 30s
-            timeout: 10s
-            retries: 5
-            start_period: 60s
-      
-          environment:      # --- Servidor ---
+      - "8080:8080"
+    environment:
       - SERVER_URL=http://localhost:8080
       - DOCKER_ENV=true
       - AUTHENTICATION_API_KEY=123456
+      - LOG_LEVEL=ERROR
+      - LOG_BAILEYS=error
       
-      # --- Logs (Aumentados para DEBUG conforme sua doc) ---
-      - LOG_LEVEL=DEBUG
-      - LOG_BAILEYS=warn
-      
-      # --- Banco de Dados (Postgres) ---
+      # Banco e Cache
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution?schema=public&connection_limit=5
       - DATABASE_SAVE_DATA_INSTANCE=true
       - DATABASE_SAVE_DATA_NEW_MESSAGE=true
-      
-      # --- Redis ---
       - CACHE_REDIS_ENABLED=true
       - CACHE_REDIS_URI=redis://:123456@redis:6379/0
       
-      # Webhook Configuration
+      # WebSocket 
+      - WEBSOCKET_MAX_PAYLOAD=104857600
+      - WEBSOCKET_PING_INTERVAL=20000
+      - WEBSOCKET_PONG_TIMEOUT=60000
+      
+      # Webhook
       - WEBHOOK_GLOBAL_ENABLED=true
       - WEBHOOK_GLOBAL_URL=http://voice_sdr_bot:8000/webhook/evolution
       - WEBHOOK_EVENTS=MESSAGES_UPSERT,CONNECTION_UPDATE,QRCODE_UPDATED
       
-      # =====================================================
-      # 🚨 A SOLUÇÃO DO PAREAMENTO (ENVs ESPECÍFICAS) 🚨
-      # =====================================================
-      
-      # Força a habilitação da lógica de Pareamento por Código
-      - CONFIG_SESSION_PHONE_PAIRING=true
-      
-      # Define o nome que aparece no celular
+      # Chrome
       - CONFIG_SESSION_PHONE_CLIENT=VoiceSDR
       - CONFIG_SESSION_PHONE_NAME=Chrome
-      
-      # Argumentos "Anti-Crash" para o Chrome no Windows
-      - CHROME_ARGS=--no-sandbox --disable-dev-shm-usage
-      
-      # Impede que a instância morra se não conectar rápido
+      - CHROME_ARGS=--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox
       - DEL_INSTANCE=false
+      - QRCODE_LIMIT=30
       
     volumes:
-      - ./evolution_data/instances:/evolution/instances
-      - ./evolution_data/store:/evolution/store
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
     networks:
       - voice_sdr_network
 
@@ -207,8 +189,7 @@ services:
     container_name: voice_sdr_bot
     restart: unless-stopped
     depends_on:
-      evolution-api:
-        condition: service_healthy
+      - evolution-api 
     ports:
       - "${PORT:-8000}:8000"
     env_file:
@@ -222,6 +203,14 @@ services:
 networks:
   voice_sdr_network:
     driver: bridge
+
+# ========================================
+# Definição dos Volumes Internos
+# ========================================
+volumes:
+  evolution_instances:
+  evolution_store:
+  evolution_postgres_data: # Volume novo para o Banco
 ```
 
 ### `Dockerfile`
@@ -320,8 +309,7 @@ logger = setup_logger(__name__)
 app = FastAPI(
     title="Voice SDR WhatsApp (Evolution API)",
     description="Atendente de vendas com IA que responde áudios no WhatsApp",
-    version="2.0.0",
-    # FIX: Usa settings.environment em vez de settings.debug
+    version="2.1.0",
     docs_url="/docs" if settings.environment == "development" else None,
     redoc_url=None
 )
@@ -342,6 +330,7 @@ connection_state = {
     "last_check": None,
     "is_creating": False
 }
+# Lock para evitar múltiplas solicitações simultâneas de QR Code
 creation_lock = asyncio.Lock()
 
 
@@ -359,10 +348,10 @@ async def startup_event():
     # Limpeza inicial
     cleanup_temp_files(max_age_hours=1)
     
-    # Aguarda a Evolution API ficar pronta
+    # Aguarda a Evolution API ficar pronta (tempo para o Docker subir)
     await asyncio.sleep(5)
     
-    # Verifica se a instância já existe
+    # Verifica se a instância já existe e está conectada
     try:
         state = await evolution_service.get_connection_state()
         if state.get("state") == "open":
@@ -419,9 +408,10 @@ async def root():
 @app.get("/qrcode", response_class=HTMLResponse)
 async def get_qrcode():
     """
-    Exibe QR Code para conectar o WhatsApp
-    Acesse este endpoint no navegador após iniciar o servidor
+    Exibe QR Code para conectar o WhatsApp.
+    Gerencia a criação ou reconexão da instância de forma segura.
     """
+    # Se já existe um processo de criação rodando, pede para aguardar
     if creation_lock.locked():
         return HTMLResponse(
             """
@@ -441,7 +431,7 @@ async def get_qrcode():
                     <div class="container">
                         <h1>🔄 Processando Solicitação...</h1>
                         <div class="loader"></div>
-                        <p>Uma conexão já está sendo estabelecida. Esta página será atualizada em 10 segundos.</p>
+                        <p>Estamos comunicando com a API do WhatsApp. A página atualizará em 10 segundos.</p>
                     </div>
                 </body>
             </html>
@@ -450,7 +440,7 @@ async def get_qrcode():
         )
 
     async with creation_lock:
-        # Primeiro, verifica se já está conectado
+        # 1. Verifica se já está conectado antes de qualquer coisa
         state = await evolution_service.get_connection_state()
         
         if state.get("state") == "open":
@@ -504,13 +494,13 @@ async def get_qrcode():
             </html>
             "
         
-        # Se não estiver conectado, força a recriação da instância
-        logger.info("ℹ️ Forçando a recriação da instância para obter um novo QR Code.")
-        await evolution_service.delete_instance()
-        await asyncio.sleep(2)  # Pausa para a API processar a exclusão
+        # 2. Se não estiver conectado, solicita QR Code (Criar ou Conectar)
+        # MODIFICAÇÃO: Não deletamos mais a instância. O método create_instance
+        # agora lida internamente com "Instância já existe" fazendo apenas a conexão.
+        logger.info("ℹ️ Solicitando QR Code (Criar ou Conectar)...")
         result = await evolution_service.create_instance()
     
-    # Extrai o QR Code de diferentes formatos possíveis
+    # 3. Processa o resultado para extrair o QR Code
     qr_code = None
     
     # Formato 1: {qrcode: {base64: "..."}}
@@ -528,7 +518,7 @@ async def get_qrcode():
     # Formato 4: Pairing Code
     pairing_code = result.get("pairingCode") or result.get("code")
     
-    # Se encontrou QR Code
+    # Cenario A: Temos QR Code
     if qr_code:
         connection_state["qr_code"] = qr_code
         
@@ -571,13 +561,8 @@ async def get_qrcode():
                         padding: 20px;
                         border-radius: 10px;
                     }}
-                    .instructions ol {{
-                        margin-left: 20px;
-                    }}
-                    .instructions li {{
-                        margin: 12px 0;
-                        font-size: 16px;
-                    }}
+                    .instructions ol {{ margin-left: 20px; }}
+                    .instructions li {{ margin: 12px 0; font-size: 16px; }}
                     .status {{
                         background: #fff3cd;
                         color: #856404;
@@ -631,318 +616,3 @@ async def get_qrcode():
             </body>
         </html>
         "
-    
-    # Se tiver pairing code
-    elif pairing_code:
-        return f"""
-        <html>
-            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                <div style="background: white; padding: 30px; border-radius: 10px; max-width: 500px; margin: 0 auto;">
-                    <h1 style="color: #25D366;">🔢 Código de Pareamento</h1>
-                    <p>Use este código no WhatsApp:</p>
-                    <h2 style="font-size: 48px; letter-spacing: 10px; color: #667eea;">{pairing_code}</h2>
-                    <p style="color: #666; margin-top: 30px;">
-                        1. Abra WhatsApp > Aparelhos conectados<br>
-                        2. Conectar aparelho > Conectar com número de telefone<br>
-                        3. Digite o código acima
-                    </p>
-                </div>
-            </body>
-        </html>
-        "
-    
-    # Se já está conectado (verificação dupla)
-    elif result.get("status") == "connected":
-        return """
-        <html>
-            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                <div style="background: white; padding: 40px; border-radius: 10px; max-width: 500px; margin: 0 auto;">
-                    <div style="font-size: 64px; margin: 20px 0;">✅</div>
-                    <h1 style="color: #25D366;">WhatsApp Conectado!</h1>
-                    <p>Envie um áudio para testar!</p>
-                    <a href="/" style="display: inline-block; margin-top: 20px; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 25px;">← Dashboard</a>
-                </div>
-            </body>
-        </html>
-        "
-    
-    # Erro: QR Code não disponível ou Timeout
-    else:
-        # Caso específico de timeout
-        if result.get("status") == "timeout":
-            title = "⏳ Instância Iniciando Lentamente..."
-            refresh_time = 10 # Mais tempo para instâncias lentas
-        else:
-            title = "⚠️ QR Code Indisponível"
-            refresh_time = 5
-
-        error_msg = result.get("message", "QR Code não disponível no momento.")
-        error_details = result.get("error", "")
-        
-        return f"""
-        <html>
-            <head>
-                <meta http-equiv="refresh" content="{refresh_time}">
-                <style>
-                    body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f2f5; }}
-                    .container {{ background: white; padding: 40px; border-radius: 12px; max-width: 600px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
-                    h1 {{ color: #ff9800; }}
-                    .loader {{ border: 4px solid #f3f3f3; border-top: 4px solid #ff9800; border-radius: 50%; width: 40px; height: 40px; animation: spin 1.5s linear infinite; margin: 20px auto; }}
-                    @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>{title}</h1>
-                    <div class="loader"></div>
-                    <p style="font-size: 18px; color: #333;">{error_msg}</p>
-                    {f'<pre style="text-align: left; background: #f5f5f5; padding: 15px; border-radius: 5px; overflow: auto; white-space: pre-wrap;">{error_details}</pre>' if error_details else ''}
-                    <p style="color: #666; margin-top: 20px;">
-                        A página será recarregada automaticamente em {refresh_time} segundos...
-                    </p>
-                    <p style="margin-top: 30px;">
-                        <a href="/qrcode" style="padding: 12px 25px; background: #667eea; color: white; text-decoration: none; border-radius: 8px;">🔄 Tentar Novamente</a>
-                    </p>
-                </div>
-            </body>
-        </html>
-        "
-
-
-@app.get("/status")
-async def check_status():
-    """Verifica o status da conexão com o WhatsApp"""
-    state = await evolution_service.get_connection_state()
-    
-    is_connected = state.get("state") == "open"
-    connection_state["connected"] = is_connected
-    connection_state["last_check"] = time.time()
-    
-    return {
-        "connected": is_connected,
-        "state": state.get("state"),
-        "instance": settings.evolution_instance_name,
-        "full_state": state
-    }
-
-
-@app.post("/webhook/evolution")
-async def evolution_webhook(payload: EvolutionWebhook, background_tasks: BackgroundTasks):
-    """
-    Recebe eventos da Evolution API
-    """
-    logger.debug(f"📨 Webhook recebido: {payload.event}")
-    
-    # QR Code atualizado
-    if payload.event == "qrcode.updated":
-        # A API da Evolution pode não enviar 'data' neste evento
-        # e o payload pode não ter essa estrutura.
-        # Por segurança, melhor buscar o QR code via GET.
-        # Mas por enquanto, vamos manter um log.
-        logger.info("🔄 Evento de QR Code recebido (verificar payload).")
-        return {"status": "qr_event_received"}
-    
-    # Conexão estabelecida
-    if payload.event == "connection.update" and hasattr(payload, 'data'):
-        state = payload.data.get("state")
-        if state == "open":
-            connection_state["connected"] = True
-            logger.info("✅ WhatsApp conectado!")
-        else:
-            connection_state["connected"] = False
-            logger.warning(f"⚠️ WhatsApp desconectado: {state}")
-        return {"status": "connection_updated"}
-    
-    # Nova mensagem
-    if payload.event == "messages.upsert":
-        # Validação principal já feita pelo Pydantic
-        if payload.is_from_me():
-            return {"status": "own_message_ignored"}
-        
-        phone_number = payload.get_sender_number()
-        message_type = payload.data.messageType
-        
-        metrics["total_messages"] += 1
-        
-        # Processa apenas áudios
-        if message_type == "audioMessage":
-            metrics["audio_messages"] += 1
-            
-            message_id = payload.data.key.id
-            
-            logger.info(f"🎤 Áudio recebido de {phone_number[-4:]}...")
-            
-            # Processa em background
-            background_tasks.add_task(
-                process_audio_pipeline,
-                message_data=payload.data.dict(), # Passa como dicionário
-                phone_number=phone_number,
-                message_id=message_id
-            )
-        else:
-            logger.info(f"ℹ️ Mensagem tipo {message_type} ignorada")
-    
-    return {"status": "received"}
-
-
-async def process_audio_pipeline(message_data: Dict[str, Any], phone_number: str, message_id: str):
-    """Pipeline completo de processamento de áudio"""
-    input_audio = None
-    output_audio = None
-    
-    start_time = time.time()
-    
-    try:
-        logger.info(f"⚙️ Iniciando pipeline para {phone_number[-4:]}...")
-        
-        # 1. Download
-        logger.info("📥 [1/4] Baixando áudio...")
-        input_audio = await evolution_service.download_media(message_data)
-        
-        if not input_audio:
-            logger.error("❌ Falha no download")
-            metrics["errors"] += 1
-            await evolution_service.send_text(
-                phone_number,
-                "Desculpe, não consegui processar seu áudio. Tente novamente!"
-            )
-            return
-        
-        # 2. IA
-        logger.info("🧠 [2/4] Processando com Gemini...")
-        response_text = await brain_service.process_audio_and_respond(input_audio)
-        
-        if not response_text:
-            logger.error("❌ IA não respondeu")
-            metrics["errors"] += 1
-            return
-        
-        logger.info(f"💬 Resposta: '{response_text[:80]}...'")
-        
-        # 3. TTS
-        logger.info("🎙️ [3/4] Gerando voz...")
-        output_audio = await voice_service.generate_audio(response_text)
-        
-        if not output_audio:
-            logger.error("❌ Falha no TTS, enviando texto")
-            await evolution_service.send_text(phone_number, response_text)
-            return
-        
-        # 4. Envio
-        logger.info("📤 [4/4] Enviando resposta...")
-        success = await evolution_service.send_audio(
-            phone_number,
-            output_audio,
-            quoted_msg_id=message_id  # Responde à mensagem original
-        )
-        
-        if success:
-            elapsed = time.time() - start_time
-            metrics["successful_responses"] += 1
-            logger.info(f"✅ Pipeline concluído em {elapsed:.2f}s")
-        else:
-            metrics["errors"] += 1
-    
-    except Exception as e:
-        logger.error(f"💥 Erro no pipeline: {e}", exc_info=True)
-        metrics["errors"] += 1
-    
-    finally:
-        safe_remove(input_audio)
-        safe_remove(output_audio)
-
-
-@app.get("/health")
-async def health_check():
-    """Health check para monitoramento"""
-    # Tenta pegar estado com timeout curto para não travar healthcheck
-    try:
-        state = await evolution_service.get_connection_state()
-        connected = state.get("state") == "open"
-    except:
-        connected = connection_state["connected"]
-
-    return {
-        "status": "healthy",
-        "whatsapp_connected": connected,
-        "uptime_seconds": int(time.time() - metrics["start_time"]),
-        "metrics": metrics
-    }
-
-
-@app.post("/disconnect")
-async def disconnect_whatsapp():
-    """Desconecta do WhatsApp"""
-    result = await evolution_service.delete_instance()
-    
-    if result:
-        connection_state["connected"] = False
-        return {"status": "disconnected"}
-    
-    return {"status": "error"}
-```
-
-### `app/config.py`
-
-```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, validator
-from typing import Literal
-
-class Settings(BaseSettings):
-    """
-    Configurações da aplicação adaptadas para Evolution API v2.
-    """
-    
-    # Controle de Ambiente
-    environment: Literal["development", "production"] = Field(default="development")
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO")
-    host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000)
-
-    # Evolution API
-    evolution_api_url: str = Field(..., description="URL base da Evolution API")
-    evolution_api_key: str = Field(..., description="Global API Key para autenticação")
-    evolution_instance_name: str = Field(..., description="Nome da instância na Evolution")
-    
-    # Google Gemini
-    gemini_api_key: str = Field(..., min_length=30)
-    gemini_model_primary: str = Field(default="gemini-2.0-flash-exp")
-    gemini_model_fallback: str = Field(default="gemini-1.5-flash")
-    
-    # Voice
-    edge_tts_voice: str = Field(default="pt-BR-AntonioNeural")
-    
-    # Limites
-    download_timeout: int = 30
-    gemini_timeout: int = 30
-    max_audio_size_mb: int = 16
-    
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore"
-    )
-    
-    @property
-    def evolution_headers(self) -> dict:
-        return {
-            "apikey": self.evolution_api_key,
-            "Content-Type": "application/json"
-        }
-    
-    # --- CORREÇÃO DE SEGURANÇA PARA WINDOWS ---
-    @validator("*", pre=True)
-    def strip_whitespace(cls, v):
-        """Remove espaços invisíveis (\r, \n, spaces) de todas as strings"""
-        if isinstance(v, str):
-            return v.strip()
-        return v
-
-    @validator("evolution_api_url")
-    def clean_url(cls, v):
-        return v.rstrip("/")
-
-settings = Settings()
-```

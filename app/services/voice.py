@@ -40,51 +40,56 @@ class VoiceService:
         if not text:
             raise VoiceServiceException("O texto para geração de áudio não pode ser vazio.")
 
-        mp3_path = get_temp_filename("mp3", prefix="tts_raw")
-        ogg_path = get_temp_filename("ogg", prefix="voice_final")
+        # Garante que get_temp_filename retorne Path, se retornar str, converte
+        mp3_path = Path(get_temp_filename(".mp3"))
+        ogg_path = Path(get_temp_filename(".ogg"))
 
         try:
             # 1. Gera o áudio bruto (MP3) com Edge-TTS
             communicate = edge_tts.Communicate(text, self.voice)
             await communicate.save(str(mp3_path))
-            logger.info("Etapa 1/2: Áudio MP3 gerado via Edge-TTS.")
-
+            
             # 2. Converte para o formato OGG/Opus para WhatsApp
             await self._convert_to_whatsapp_format(mp3_path, ogg_path)
-            logger.info("Etapa 2/2: Áudio convertido para OGG Opus com sucesso.")
-
+            
+            logger.info(f"🔊 Áudio gerado com sucesso: {ogg_path.name}")
             return ogg_path
 
         except Exception as e:
             # Limpa o arquivo OGG se a conversão falhou
             safe_remove(ogg_path)
-            # Encapsula a exceção original para fornecer mais contexto
             error_msg = f"Falha no pipeline de geração de voz: {e}"
-            logger.error(error_msg, exc_info=True)
+            logger.error(error_msg)
+            # Se for uma exceção nossa, relança. Se for genérica, encapsula.
+            if isinstance(e, VoiceServiceException):
+                raise
             raise VoiceServiceException(error_msg, original_exception=e)
 
         finally:
-            # Garante a limpeza do arquivo MP3 intermediário
+            # Garante a limpeza do arquivo MP3 intermediário (lixo)
             safe_remove(mp3_path)
 
     async def _convert_to_whatsapp_format(self, input_path: Path, output_path: Path):
         """
         Converte um arquivo de áudio para o formato OGG Opus usando FFmpeg.
-        Lança VoiceServiceException em caso de erro.
+        Executa em subprocesso para não bloquear o Event Loop do FastAPI.
         """
+        # Parâmetros otimizados para Nota de Voz do WhatsApp
         cmd = [
             "ffmpeg",
+            "-v", "quiet",          # Remove logs verbosos do ffmpeg
+            "-y",                   # Sobrescreve se existir
             "-i", str(input_path),
-            "-c:a", "libopus",
-            "-b:a", "64k",
-            "-ar", "16000",
-            "-ac", "1",
-            "-application", "voip",
-            "-y",
+            "-c:a", "libopus",      # Codec Opus (Nativo do WhatsApp)
+            "-b:a", "32k",          # Bitrate (32k-64k é ideal para voz, economiza dados)
+            "-ar", "24000",         # Sample rate (24khz dá mais brilho à voz que 16khz)
+            "-ac", "1",             # Mono (WhatsApp voice notes são mono)
+            "-application", "voip", # Otimização para voz
             str(output_path),
         ]
 
         process = None
+        # Entra na fila do semáforo (máx 3 simultâneos)
         async with self._semaphore:
             try:
                 process = await asyncio.create_subprocess_exec(
@@ -97,23 +102,21 @@ class VoiceService:
                 _, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
 
                 if process.returncode != 0:
-                    err_msg = stderr.decode().strip() if stderr else "Erro desconhecido no FFmpeg"
-                    raise VoiceServiceException(f"FFmpeg falhou com código {process.returncode}: {err_msg}")
+                    err_msg = stderr.decode().strip() if stderr else "Erro desconhecido"
+                    raise VoiceServiceException(f"FFmpeg falhou (Código {process.returncode}): {err_msg}")
 
             except asyncio.TimeoutError as e:
                 if process:
                     try:
                         process.kill()
                     except ProcessLookupError:
-                        pass  # O processo pode já ter terminado
-                raise VoiceServiceException("Timeout de 15s excedido durante a conversão de áudio com FFmpeg.", original_exception=e)
+                        pass
+                raise VoiceServiceException("Timeout de 15s excedido na conversão de áudio.", original_exception=e)
 
             except Exception as e:
-                # Captura outras exceções (ex: FileNotFoundError se ffmpeg não estiver no PATH)
-                # e as encapsula.
                 if isinstance(e, VoiceServiceException):
-                    raise  # Re-lança a exceção já tratada
-                raise VoiceServiceException(f"Erro inesperado durante a execução do FFmpeg.", original_exception=e)
+                    raise
+                raise VoiceServiceException(f"Erro inesperado no FFmpeg: {e}", original_exception=e)
 
 
 # Singleton
