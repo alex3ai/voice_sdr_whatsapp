@@ -5,7 +5,9 @@ import time
 from pathlib import Path
 from typing import Generator
 from contextlib import contextmanager
-from app.utils.logger import logger  # Importa o logger configurado anteriormente
+from app.utils.logger import setup_logger # &lt;--- Importa a FUNÇÃO
+
+logger = setup_logger(__name__) # &lt;--- Cria o logger localmente
 
 # Diretório temporário dedicado para a aplicação
 # Usa gettempdir() do SO mas cria uma subpasta para organização

@@ -4,7 +4,7 @@ from typing import Literal
 
 class Settings(BaseSettings):
     """
-    Configurações da aplicação adaptadas para Evolution API v2.
+    Configurações Universais (OpenRouter/GLM-4 + Evolution API v2).
     """
     
     # Controle de Ambiente
@@ -18,17 +18,19 @@ class Settings(BaseSettings):
     evolution_api_key: str = Field(..., description="Global API Key para autenticação")
     evolution_instance_name: str = Field(..., description="Nome da instância na Evolution")
     
-    # Google Gemini
-    gemini_api_key: str = Field(..., min_length=30)
-    gemini_model_primary: str = Field(default="gemini-2.0-flash-exp")
-    gemini_model_fallback: str = Field(default="gemini-1.5-flash")
+    # LLM (OpenRouter / OpenAI Compatible)
+    # URL Base da OpenRouter
+    openai_base_url: str = Field(default="https://openrouter.ai/api/v1", description="URL Base do LLM")
+    openai_api_key: str = Field(..., description="API Key da OpenRouter")
+    # Modelo GLM-4.5 Air (Gratuito) via OpenRouter
+    openai_model: str = Field(default="z-ai/glm-4.5-air:free", description="Modelo a ser utilizado")
     
-    # Voice
+    # Voice (TTS)
+    # Edge-TTS é o primário, gTTS entra como fallback se falhar
     edge_tts_voice: str = Field(default="pt-BR-AntonioNeural")
     
     # Limites
-    download_timeout: int = 30
-    gemini_timeout: int = 30
+    download_timeout: int = 60
     max_audio_size_mb: int = 16
     
     model_config = SettingsConfigDict(
@@ -53,8 +55,9 @@ class Settings(BaseSettings):
             return v.strip()
         return v
 
-    @validator("evolution_api_url")
+    @validator("evolution_api_url", "openai_base_url")
     def clean_url(cls, v):
-        return v.rstrip("/")
+        """Garante que URLs não terminem com barra /"""
+        return v.rstrip("/") if isinstance(v, str) else v
 
 settings = Settings()

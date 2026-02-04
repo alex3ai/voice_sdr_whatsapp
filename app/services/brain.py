@@ -1,166 +1,128 @@
 """
-Serviço de Inteligência Artificial usando Google Gemini.
-Implementação 100% Assíncrona com Fallback e Leitura não-bloqueante.
+Serviço de Inteligência Artificial Híbrido.
+Ouvido: Groq (Whisper) - Rápido e Gratuito.
+Cérebro: OpenRouter (DeepSeek/Llama) - Inteligente.
 """
-import aiofiles
 import pathlib
-from typing import Optional
-
-# Certifique-se de ter instalado: pip install google-genai
-from google import genai
-from google.genai import types
-from google.api_core import exceptions as google_exceptions
-
+import os
+from openai import AsyncOpenAI
 from app.config import settings
-from app.utils.exceptions import GeminiApiException
-from app.utils.logger import logger
+from app.utils.logger import setup_logger
 
+logger = setup_logger(__name__)
 
 class BrainService:
     """
-    Gerenciador de raciocínio (IA) com estratégia de redundância.
+    Gerenciador de raciocínio e audição.
     """
 
-    # Prompt do sistema atualizado com a personalidade de vendas
+    # Prompt de Vendas
     SYSTEM_PROMPT = """
-Você é o 'Alex', um consultor de vendas sênior da 'TechSolutions Brasil'.
-Seu objetivo é qualificar leads e agendar demonstrações.
-
-**Regras de Comportamento:**
-1. Responda de forma curta, natural e persuasiva (máximo 2 frases).
-2. Use linguagem falada (pode usar "tá bom", "né", "olha só").
-3. Jamais invente preços, diga que depende do projeto.
-4. Se o cliente perguntar preço, tente agendar uma reunião.
-5. IMPORTANTE: Sua saída será convertida em áudio. Não use emojis, listas, markdown (*negrito*) ou caracteres especiais. Apenas texto puro.
-"""
+    Você é o Alex, SDR sênior da 'TechSolutions'.
+    Objetivo: Qualificar leads e agendar reunião.
+    
+    Regras:
+    1. Respostas curtas (máx 20 palavras).
+    2. Tom brasileiro natural ("tá bom", "né").
+    3. Sem emojis.
+    4. Termine com uma pergunta.
+    """
 
     def __init__(self):
+        # 1. Configura o CÉREBRO (Texto -> Texto)
+        # Usa as configurações do config.py (OpenRouter/DeepSeek)
         try:
-            # Inicializa o cliente do Google GenAI (SDK v1.0+)
-            self.client = genai.Client(api_key=settings.gemini_api_key)
-
-            # Estratégia de Modelos (Primary -> Fallback)
-            # Ex: Primary = "gemini-2.0-flash-exp", Fallback = "gemini-1.5-flash"
-            self.primary_model = settings.gemini_model_primary
-            self.fallback_model = settings.gemini_model_fallback
-            self._current_model = self.primary_model
-
-            logger.info(
-                f"🧠 Brain inicializado. Modelo Principal: {self._current_model}"
+            self.client_brain = AsyncOpenAI(
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url
             )
+            self.model_brain = settings.openai_model
+            logger.info(f"🧠 Cérebro conectado: {self.model_brain}")
         except Exception as e:
-            logger.critical(f"Falha crítica ao iniciar BrainService: {e}")
+            logger.critical(f"Falha ao iniciar Cérebro: {e}")
             raise
 
-    async def process_audio_and_respond(
-        self, audio_path: pathlib.Path | str
-    ) -> str:
-        """
-        Lê o arquivo de áudio e solicita resposta à IA.
-        """
-        path_obj = pathlib.Path(audio_path)
-
-        if not path_obj.exists():
-            logger.error(f"Arquivo de áudio não encontrado: {audio_path}")
-            return "Ops, tive um erro técnico e não encontrei seu áudio."
-
-        try:
-            # 1. Leitura não-bloqueante do disco (Vital para FastAPI)
-            async with aiofiles.open(path_obj, "rb") as f:
-                audio_bytes = await f.read()
-
-            file_size_kb = len(audio_bytes) / 1024
-
-            # Validação simples
-            if len(audio_bytes) < 100:
-                logger.warning("Áudio vazio ou muito curto ignorado.")
-                return "Não consegui te ouvir, o áudio ficou mudo. Pode repetir?"
-
-            logger.info(f"Enviando {file_size_kb:.1f}KB para o Gemini...")
-
-            # 2. Tenta processar com fallback automático
-            response = await self._try_models_with_fallback(audio_bytes)
-
-            return response
-
-        except GeminiApiException as e:
-            logger.error(f"Falha na comunicação com a API do Gemini: {e}")
-            return self._get_fallback_message()
-        except Exception as e:
-            logger.error(f"Erro inesperado no pipeline do Brain: {e}", exc_info=True)
-            return self._get_fallback_message()
-
-    async def _try_models_with_fallback(self, audio_bytes: bytes) -> str:
-        """Tenta o modelo primário e, em caso de falha, aciona o fallback."""
-        try:
-            return await self._call_gemini_api(audio_bytes, self._current_model)
-        except GeminiApiException as e:
-            logger.warning(
-                f"Modelo {self._current_model} falhou. Tentando fallback para {self.fallback_model}..."
+        # 2. Configura o OUVIDO (Áudio -> Texto)
+        # Usa a Groq Cloud (Whisper-large-v3) que é extremamente rápida
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        
+        if self.groq_api_key:
+            self.client_ear = AsyncOpenAI(
+                api_key=self.groq_api_key,
+                base_url="https://api.groq.com/openai/v1"
             )
-            
-            # Se já estávamos no fallback e falhou, não tem o que fazer
-            if self._current_model == self.fallback_model:
-                raise e
+            logger.info("👂 Ouvido ativado: Whisper via Groq.")
+        else:
+            self.client_ear = None
+            logger.warning("⚠️ Chave GROQ_API_KEY não encontrada no .env. O bot continuará 'fingindo' que ouviu.")
 
-            # Tenta mudar para o fallback
-            try:
-                response = await self._call_gemini_api(
-                    audio_bytes, self.fallback_model
+    async def transcribe_audio(self, audio_path: str) -> str:
+        """
+        Transcreve o áudio usando Groq Whisper (Real) ou Fallback (Simulado).
+        """
+        # Modo Simulação (se não tiver chave)
+        if not self.client_ear:
+            logger.warning("Simulando audição (Adicione GROQ_API_KEY no .env para corrigir)")
+            return "Olá, vi seu anúncio no Instagram e quero saber mais."
+
+        # Modo Real (Groq)
+        try:
+            path_obj = pathlib.Path(audio_path)
+            if not path_obj.exists():
+                logger.error(f"Arquivo de áudio não existe: {audio_path}")
+                return ""
+
+            # Abre o arquivo e envia para a Groq
+            with open(path_obj, "rb") as audio_file:
+                transcription = await self.client_ear.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3", # Melhor modelo open-source atual
+                    response_format="text",
+                    language="pt" # Força português para evitar alucinações
                 )
-                # Se funcionar, mantemos o fallback como padrão temporariamente ou apenas retornamos
-                # Aqui opto por apenas retornar para tentar o primário na próxima (failback strategy)
-                logger.info(f"Sucesso com o fallback ({self.fallback_model}).")
-                return response
-            except GeminiApiException as fallback_e:
-                logger.critical(f"Modelo de fallback também falhou: {fallback_e}")
-                raise fallback_e
-
-    async def _call_gemini_api(
-        self, audio_bytes: bytes, model: str
-    ) -> str:
-        """
-        Realiza a chamada à API usando envio de bytes (Inline Data).
-        """
-        try:
-            # SDK v1.0+ structure
-            response = await self.client.aio.models.generate_content(
-                model=model,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[
-                            types.Part.from_text(text="O cliente enviou este áudio. Responda seguindo suas instruções."),
-                            types.Part.from_bytes(
-                                data=audio_bytes, 
-                                mime_type="audio/ogg" # OGG é o padrão do WhatsApp
-                            ),
-                        ],
-                    )
-                ],
-                config=types.GenerateContentConfig(
-                    system_instruction=self.SYSTEM_PROMPT,
-                    temperature=0.6, # Levemente mais criativo, mas controlado
-                    max_output_tokens=150, # Respostas curtas para áudio
-                ),
-            )
-
-            if response and response.text:
-                clean_text = response.text.strip()
-                logger.info(f"🤖 Resposta gerada ({len(clean_text)} chars)")
-                return clean_text
-
-            raise GeminiApiException("A API do Gemini retornou uma resposta vazia.")
+            
+            text_result = str(transcription).strip()
+            logger.info(f"🗣️ Transcrição Real: {text_result}")
+            return text_result
 
         except Exception as e:
-            # Captura erros genéricos do Google e encapsula
-            error_message = f"Erro na chamada à API Gemini ({model})"
-            logger.error(f"{error_message}: {e}")
-            raise GeminiApiException(error_message, original_exception=e)
+            logger.error(f"❌ Erro na transcrição (Groq): {e}")
+            return ""
 
-    @staticmethod
-    def _get_fallback_message() -> str:
-        return "Tive um problema técnico para processar seu áudio. Pode escrever, por favor?"
+    async def process_audio_and_respond(self, audio_path: str | pathlib.Path) -> str:
+        """
+        Pipeline: Ouvir (Groq) -> Pensar (DeepSeek)
+        """
+        try:
+            # 1. Ouvir
+            user_text = await self.transcribe_audio(str(audio_path))
+            
+            # Se o áudio estava vazio ou inaudível
+            if not user_text or len(user_text) < 2: 
+                return "Oi, não consegui te ouvir direito. Pode mandar de novo?"
+
+            # 2. Pensar
+            response = await self.client_brain.chat.completions.create(
+                model=self.model_brain,
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": user_text}
+                ],
+                temperature=0.6,
+                max_tokens=150
+            )
+
+            reply = response.choices[0].message.content
+            
+            # Limpeza
+            clean_reply = reply.strip().replace('"', '').replace("*", "")
+            
+            logger.info(f"🧠 Cérebro Respondeu: {clean_reply}")
+            return clean_reply
+
+        except Exception as e:
+            logger.error(f"❌ Erro no cérebro: {e}", exc_info=True)
+            return "Oi! Tive um problema técnico. Pode repetir o áudio?"
 
 # Singleton
 brain_service = BrainService()

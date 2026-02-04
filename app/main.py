@@ -1,11 +1,13 @@
 """
 Servidor FastAPI - Voice SDR com Evolution API
-Integrando Dashboard Visual + Lógica de Negócios Robusta
+Versão 2.7.0 - Correção de JID e Proteção Anti-Flood
 """
 import asyncio
 import time
+import json
 from typing import Dict, Any
 
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -16,14 +18,38 @@ from app.services.voice import voice_service
 from app.utils.files import safe_remove, cleanup_temp_files
 from app.utils.logger import setup_logger
 
+# Configura Logger
 logger = setup_logger(__name__)
+
+# --- Middleware de Logs ---
+class LogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Ignora logs da rota de saúde para não poluir
+        if "/health" in request.url.path:
+            return await call_next(request)
+
+        # 1. Log da Entrada
+        body = await request.body()
+        logger.info(f"➡️ [REQ] {request.method} {request.url.path}")
+        
+        async def receive():
+            return {"type": "http.request", "body": body}
+        request._receive = receive
+
+        # 2. Processamento
+        response = await call_next(request)
+
+        # 3. Log da Saída
+        logger.info(f"⬅️ [RES] Status: {response.status_code}")
+        return response
 
 # Inicialização do FastAPI
 app = FastAPI(
     title="Voice SDR WhatsApp",
     description="Atendente comercial autônomo via Voz",
-    version="2.2.0"
+    version="2.7.0"
 )
+app.add_middleware(LogMiddleware)
 
 # Métricas em Memória
 metrics = {
@@ -34,7 +60,7 @@ metrics = {
     "start_time": time.time()
 }
 
-# Estado da conexão (Cache local)
+# Estado da conexão
 connection_state = {
     "connected": False,
     "qr_code": None,
@@ -47,12 +73,12 @@ creation_lock = asyncio.Lock()
 async def startup_event():
     """Inicialização e Limpeza"""
     logger.info("=" * 70)
-    logger.info("🚀 Voice SDR WhatsApp Iniciando...")
+    logger.info("🚀 Voice SDR WhatsApp Iniciando (v2.7.0)...")
     logger.info("=" * 70)
     
     cleanup_temp_files(max_age_hours=1)
     
-    # Pequeno delay para garantir que serviços externos subam
+    # Delay para serviços externos
     await asyncio.sleep(2)
     
     try:
@@ -68,14 +94,12 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Executa ao encerrar o servidor"""
-    uptime = time.time() - metrics["start_time"]
     logger.info("🛑 Encerrando Voice SDR WhatsApp")
-    logger.info(f"📊 Métricas finais: {metrics}")
 
 
 @app.get("/", response_class=JSONResponse)
 async def root():
-    """Dashboard JSON (Simples e Rápido)"""
+    """Dashboard JSON"""
     uptime = int(time.time() - metrics["start_time"])
     return {
         "service": "Voice SDR Bot",
@@ -85,159 +109,173 @@ async def root():
         "metrics": metrics,
         "actions": {
             "connect": "/qrcode",
-            "check_status": "/status"
+            "reset_session": "/reset"
         }
     }
+
+@app.get("/health")
+async def health_check():
+    """Health check para o Docker"""
+    return {"status": "ok", "timestamp": time.time()}
+
+
+@app.get("/reset", response_class=HTMLResponse)
+async def reset_session():
+    """
+    Força a exclusão da instância para limpar sessões bugadas.
+    """
+    logger.warning("🔥 RESET SOLICITADO: Deletando instância...")
+    success = await evolution_service.delete_instance()
+    
+    if success:
+        connection_state["connected"] = False
+        return """
+        <html>
+            <body style='text-align:center; padding:50px; background:#ffebee; font-family:sans-serif;'>
+                <h1 style='color:#c62828;'>🗑️ Sessão Deletada com Sucesso</h1>
+                <p>A instância antiga foi removida.</p>
+                <br>
+                <a href='/qrcode' style='background:#2196F3; color:white; padding:15px 30px; text-decoration:none; border-radius:5px; font-size:20px;'>
+                    🔄 Gerar Novo QR Code
+                </a>
+            </body>
+        </html>
+        """
+    else:
+        return "<h1>❌ Falha ao deletar. Verifique os logs do Docker.</h1>"
 
 
 @app.get("/qrcode", response_class=HTMLResponse)
 async def get_qrcode_page():
-    """
-    Interface Visual para conexão.
-    Gerencia a lógica de 'Instância já existe' vs 'Nova Instância' automaticamente.
-    """
+    """Interface Visual para conexão."""
     if creation_lock.locked():
-        return HTMLResponse("<h1>⏳ Aguarde, processando solicitação anterior...</h1>", status_code=429)
+        return HTMLResponse("<h1>⏳ Aguarde...</h1>", status_code=429)
 
     async with creation_lock:
-        # 1. Verifica status atual
         try:
             state = await evolution_service.get_connection_state()
             if state.get("state") == "open":
                 connection_state["connected"] = True
-                return """
-                <html>
-                    <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #e0f7fa;">
-                        <h1 style="color: #00695c;">✅ WhatsApp Conectado!</h1>
-                        <p>O robô já está operando.</p>
-                        <a href="/">Voltar para Dashboard</a>
-                    </body>
-                </html>
-                """
+                return "<html><body style='text-align:center; padding:50px; background:#e0f7fa;'><h1>✅ Conectado!</h1><p>Bot Operacional.</p></body></html>"
 
-            # 2. Solicita criação/conexão
+            # Tenta criar (Se der erro 403, o service agora trata e reconecta)
             response = await evolution_service.create_instance()
             
-            # Lógica para extrair QR Code (Base64 ou String)
             qr_data = None
-            if isinstance(response.get("qrcode"), dict):
-                qr_data = response["qrcode"].get("base64")
-            elif "base64" in response:
-                qr_data = response["base64"]
+            if isinstance(response, dict):
+                if "qrcode" in response and isinstance(response["qrcode"], dict):
+                    qr_data = response["qrcode"].get("base64")
+                elif "base64" in response:
+                    qr_data = response["base64"]
+                elif "qrcode" in response and "base64" in response["qrcode"]:
+                    qr_data = response["qrcode"]["base64"]
             
             if qr_data:
                 return f"""
                 <html>
                     <head><meta http-equiv="refresh" content="15"></head>
-                    <body style="font-family: sans-serif; text-align: center; padding: 20px;">
+                    <body style="text-align:center; padding:20px; font-family:sans-serif;">
                         <h1>📱 Escaneie o QR Code</h1>
-                        <img src="{qr_data}" style="border: 5px solid #333; border-radius: 10px; max-width: 300px;" />
-                        <p>A página atualizará em 15 segundos...</p>
-                        <p>Abra o WhatsApp > Aparelhos Conectados > Conectar</p>
+                        <img src="{qr_data}" style="border: 5px solid #333; width:300px; border-radius:10px;" />
+                        <p>Atualizando em 15s...</p>
+                        <br><br>
+                        <hr>
+                        <p style="color:red; font-size:12px;">Deu erro ao escanear? <a href="/reset">Clique aqui para Resetar</a></p>
                     </body>
                 </html>
                 """
             
-            return f"<h1>⚠️ Estado: {response.get('instance', {}).get('state', 'Desconhecido')}</h1><p>Recarregue a página.</p>"
-
+            return f"""
+            <html>
+                <head><meta http-equiv="refresh" content="5"></head>
+                <body style='text-align:center; padding:50px;'>
+                    <h1>⏳ Carregando...</h1>
+                    <p>Status: {response}</p>
+                    <p>Tentando buscar QR Code...</p>
+                </body>
+            </html>
+            """
         except Exception as e:
-            logger.error(f"Erro ao gerar QR: {e}")
-            return f"<h1>❌ Erro: {str(e)}</h1>"
-
-
-@app.get("/status")
-async def check_status():
-    """Verifica o status da conexão com o WhatsApp"""
-    state = await evolution_service.get_connection_state()
-    is_connected = state.get("state") == "open"
-    connection_state["connected"] = is_connected
-    return {
-        "connected": is_connected,
-        "state": state.get("state"),
-        "metrics": metrics
-    }
+            return f"<h1>❌ Erro: {str(e)}</h1><p><a href='/reset'>Tentar Resetar Instância</a></p>"
 
 
 @app.post("/webhook/evolution")
 async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
-    """
-    Webhook Central.
-    Recebe TUDO da Evolution e filtra o que interessa.
-    """
+    """Webhook Central."""
     try:
-        # Lemos o JSON puro para flexibilidade (evita erros de validação Pydantic)
         body = await request.json()
         event_type = body.get("event")
         data = body.get("data", {})
         
-        # --- Lógica de Atualização de Status ---
+        # 1. Atualização de Status
         if event_type == "connection.update":
             state = data.get("state")
             connection_state["connected"] = (state == "open")
-            logger.info(f"📡 Status da conexão mudou para: {state}")
+            logger.info(f"📡 Status conexão: {state}")
             return {"ack": True}
 
-        # --- Filtro: Apenas Novas Mensagens ---
+        # 2. Filtro de Evento
         if event_type != "messages.upsert":
             return {"status": "ignored_event_type"}
 
-        key = data.get("key", {})
-        
-        # 1. Ignora mensagens enviadas por mim mesmo
-        if key.get("fromMe"): 
-            return {"status": "ignored_from_me"}
-        
-        # 2. Ignora Status/Stories (broadcast)
-        remote_jid = key.get("remoteJid", "")
-        if "broadcast" in remote_jid:
-            return {"status": "ignored_broadcast"}
+        # 3. Filtro Anti-Histórico (CRÍTICO: 60s tolerancia)
+        message_timestamp = data.get("messageTimestamp")
+        if message_timestamp:
+            msg_time = int(message_timestamp)
+            current_time = int(time.time())
+            # Reduzido para 60s para evitar loop de mensagens velhas
+            if (current_time - msg_time) > 60:
+                logger.info(f"⛔ Ignorado: Mensagem antiga ({current_time - msg_time}s atrás)")
+                return {"status": "ignored_old_message"}
 
-        # 3. Detecta Áudio (Normal ou Efêmero/Temporário)
+        key = data.get("key", {})
+        sender = key.get("remoteJid", "")
+        
+        # 4. Filtros de Origem
+        if key.get("fromMe"): return {"status": "ignored_from_me"}
+        if "broadcast" in sender: return {"status": "ignored_broadcast"}
+
+        # 5. Detecta Áudio
         msg_type = data.get("messageType")
         is_audio = msg_type == "audioMessage"
         
-        # Tratamento especial para mensagens temporárias (ephemeral)
-        # O WhatsApp esconde o áudio dentro de ephemeralMessage -> message -> audioMessage
         if msg_type == "ephemeralMessage":
             real_msg = data.get("message", {}).get("ephemeralMessage", {}).get("message", {})
             if "audioMessage" in real_msg:
                 is_audio = True
-                # Ajusta os dados para o download funcionar corretamente
-                # Substituímos a estrutura efêmera pela estrutura de áudio real para o resto do código
                 data["message"] = real_msg 
 
         if not is_audio:
             metrics["total_messages"] += 1
             return {"status": "ignored_not_audio"}
 
-        # --- Processamento ---
+        # 6. Processamento
         metrics["total_messages"] += 1
         metrics["audio_messages"] += 1
         
-        phone = remote_jid.split("@")[0]
+        # CORREÇÃO: Usa o remoteJid completo para evitar Erro 400
+        phone_jid = sender 
         msg_id = key.get("id")
 
-        logger.info(f"🎤 Áudio recebido de {phone}. Iniciando pipeline...")
+        logger.info(f"🎤 Áudio VÁLIDO recebido de {phone_jid}. Iniciando pipeline...")
 
         background_tasks.add_task(
             pipeline_sales_response,
             message_data=data,
-            phone=phone,
+            phone_jid=phone_jid,
             message_id=msg_id
         )
 
         return {"status": "processing"}
 
     except Exception as e:
-        logger.error(f"Erro crítico no webhook: {e}")
-        # Retornamos 200 mesmo com erro para o WhatsApp não ficar tentando reenviar infinitamente
+        logger.error(f"Erro webhook: {e}", exc_info=True)
         return {"status": "error_handled"}
 
 
-async def pipeline_sales_response(message_data: Dict[str, Any], phone: str, message_id: str):
-    """
-    Coração do Robô: Download -> Cérebro -> Voz -> Envio
-    """
+async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, message_id: str):
+    """Pipeline: Download -> IA -> Voz -> Envio"""
+    logger.info(f"🚀 [Pipeline] Iniciando para {phone_jid}...")
     input_path = None
     output_path = None
     
@@ -245,39 +283,38 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone: str, mess
         # 1. Download
         input_path = await evolution_service.download_media(message_data)
         if not input_path:
-            logger.error("❌ Falha no download do áudio.")
-            metrics["errors"] += 1
+            logger.error("❌ [Pipeline] Falha no download do áudio.")
             return
 
-        # 2. Inteligência (Gemini)
-        # O brain_service já lida com o arquivo e retorna texto
+        logger.info(f"📥 [Pipeline] Áudio baixado em: {input_path}")
+
+        # 2. Inteligência (Brain já transcreve e raciocina)
         response_text = await brain_service.process_audio_and_respond(input_path)
         
-        if not response_text:
-            logger.warning("⚠️ IA retornou texto vazio ou falhou.")
-            metrics["errors"] += 1
-            return
+        # Fallback de segurança se a IA falhar (ex: Rate Limit)
+        if not response_text: 
+            response_text = "Desculpe, tive um problema técnico momentâneo. Poderia repetir?"
+            logger.warning("⚠️ [Pipeline] IA retornou vazio, usando resposta de fallback.")
 
-        logger.info(f"🤖 IA sugere: {response_text[:50]}...")
+        logger.info(f"🤖 [Pipeline] IA: {response_text[:50]}...")
 
-        # 3. Voz (Edge-TTS + FFmpeg)
+        # 3. Voz
         output_path = await voice_service.generate_audio(response_text)
 
         # 4. Envio
         if output_path:
-            await evolution_service.send_audio(phone, str(output_path), quoted_id=message_id)
+            logger.info("🎙️ [Pipeline] Enviando áudio de resposta...")
+            await evolution_service.send_audio(phone_jid, str(output_path), quoted_id=message_id)
             metrics["successful_responses"] += 1
-            logger.info("✅ Ciclo completo com sucesso!")
+            logger.info("✅ [Pipeline] Sucesso!")
         else:
-            # Fallback: Se não conseguiu gerar áudio, manda texto
-            await evolution_service.send_text(phone, response_text)
-            logger.warning("⚠️ Áudio falhou, enviado fallback de texto.")
-            metrics["errors"] += 1 # Conta como erro parcial
+            # Fallback final (Texto)
+            await evolution_service.send_text(phone_jid, response_text)
+            logger.warning("⚠️ [Pipeline] Falha no áudio, enviado texto.")
 
     except Exception as e:
-        logger.error(f"💥 Erro no pipeline: {e}", exc_info=True)
+        logger.error(f"💥 [Pipeline] Erro crítico: {e}", exc_info=True)
         metrics["errors"] += 1
     finally:
-        # Limpeza obrigatória para não encher o disco
         safe_remove(input_path)
         safe_remove(output_path)

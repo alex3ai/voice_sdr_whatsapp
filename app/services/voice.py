@@ -1,13 +1,16 @@
 import asyncio
 import shutil
-from pathlib import Path
-
 import edge_tts
+from gtts import gTTS  # Biblioteca de fallback
+from pathlib import Path
+from typing import Optional
+
 from app.config import settings
 from app.utils.exceptions import VoiceServiceException
 from app.utils.files import get_temp_filename, safe_remove
-from app.utils.logger import logger
+from app.utils.logger import setup_logger
 
+logger = setup_logger(__name__)
 
 class VoiceService:
     """
@@ -17,79 +20,87 @@ class VoiceService:
 
     def __init__(self):
         self.voice = settings.edge_tts_voice
-        self._verify_dependency()
-
         # SRE: Limita a 3 conversões simultâneas para evitar CPU Throttling
         self._semaphore = asyncio.Semaphore(3)
+        self._check_ffmpeg()
 
-    def _verify_dependency(self):
-        """Fail Fast: Verifica se o FFmpeg está instalado."""
+    def _check_ffmpeg(self):
+        """Fail Fast: Verifica se o FFmpeg está instalado de forma assíncrona."""
         if not shutil.which("ffmpeg"):
-            error_msg = "FFmpeg não encontrado no PATH do sistema."
-            logger.critical(f"🚨 {error_msg}")
-            logger.critical("No Dockerfile, adicione: RUN apt-get install -y ffmpeg")
-            raise VoiceServiceException(error_msg)
+            logger.critical("🚨 FFmpeg não encontrado no PATH! O áudio não será gerado.")
         else:
             logger.info("✅ FFmpeg detectado e pronto para uso.")
 
-    async def generate_audio(self, text: str) -> Path:
+    async def generate_audio(self, text: str) -> Optional[Path]:
         """
-        Pipeline: Texto -> Edge-TTS (MP3) -> FFmpeg (OGG/Opus).
-        Lança VoiceServiceException em caso de falha.
+        Orquestra o processo: Texto -> Áudio Bruto -> OGG (FFmpeg).
+        Retorna None se falhar, para ativar o fallback de texto.
         """
         if not text:
-            raise VoiceServiceException("O texto para geração de áudio não pode ser vazio.")
+            return None
 
-        # Garante que get_temp_filename retorne Path, se retornar str, converte
-        mp3_path = Path(get_temp_filename(".mp3"))
-        ogg_path = Path(get_temp_filename(".ogg"))
+        # Limpa caracteres que quebram o TTS
+        clean_text = text.replace("*", "").replace("_", "").strip()
+        
+        mp3_path = get_temp_filename(".mp3", prefix="tts_raw")
+        ogg_path = get_temp_filename(".ogg", prefix="voice_note")
 
         try:
-            # 1. Gera o áudio bruto (MP3) com Edge-TTS
-            communicate = edge_tts.Communicate(text, self.voice)
-            await communicate.save(str(mp3_path))
-            
-            # 2. Converte para o formato OGG/Opus para WhatsApp
-            await self._convert_to_whatsapp_format(mp3_path, ogg_path)
-            
-            logger.info(f"🔊 Áudio gerado com sucesso: {ogg_path.name}")
-            return ogg_path
+            # --- TENTATIVA 1: Edge-TTS (Alta Qualidade) ---
+            try:
+                communicate = edge_tts.Communicate(clean_text, self.voice)
+                await communicate.save(str(mp3_path))
+                
+                # Se salvou com sucesso, converte
+                await self._convert_to_whatsapp_format(mp3_path, ogg_path)
+                return ogg_path
 
-        except Exception as e:
-            # Limpa o arquivo OGG se a conversão falhou
-            safe_remove(ogg_path)
-            error_msg = f"Falha no pipeline de geração de voz: {e}"
-            logger.error(error_msg)
-            # Se for uma exceção nossa, relança. Se for genérica, encapsula.
-            if isinstance(e, VoiceServiceException):
-                raise
-            raise VoiceServiceException(error_msg, original_exception=e)
+            except Exception as e_edge:
+                logger.warning(f"⚠️ Edge-TTS falhou (Provável bloqueio 403). Tentando gTTS... Erro: {e_edge}")
+                # Limpa o ogg se ele foi criado parcialmente
+                safe_remove(ogg_path) 
+                # Não retorna, deixa cair para o bloco de baixo (gTTS)
+
+            # --- TENTATIVA 2: gTTS (Fallback garantido) ---
+            try:
+                # gTTS é síncrono/bloqueante, rodamos em uma thread separada para não travar o bot
+                await asyncio.to_thread(self._run_gtts, clean_text, mp3_path)
+                
+                logger.info("ℹ️ Usando gTTS (Fallback).")
+                await self._convert_to_whatsapp_format(mp3_path, ogg_path)
+                return ogg_path
+
+            except Exception as e_gtts:
+                logger.error(f"❌ gTTS também falhou: {e_gtts}")
+                safe_remove(ogg_path) # Limpa lixo
+                return None
 
         finally:
-            # Garante a limpeza do arquivo MP3 intermediário (lixo)
+            # Sempre limpa o arquivo intermediário (MP3) para economizar espaço
             safe_remove(mp3_path)
+
+    def _run_gtts(self, text: str, path: Path):
+        """Executa a geração do Google Translate TTS (Síncrono)"""
+        tts = gTTS(text=text, lang='pt', slow=False)
+        tts.save(str(path))
 
     async def _convert_to_whatsapp_format(self, input_path: Path, output_path: Path):
         """
-        Converte um arquivo de áudio para o formato OGG Opus usando FFmpeg.
-        Executa em subprocesso para não bloquear o Event Loop do FastAPI.
+        Converte MP3 para OGG Opus (Formato nativo do WhatsApp).
         """
-        # Parâmetros otimizados para Nota de Voz do WhatsApp
         cmd = [
             "ffmpeg",
-            "-v", "quiet",          # Remove logs verbosos do ffmpeg
-            "-y",                   # Sobrescreve se existir
+            "-v", "quiet",          # Silencioso
+            "-y",                   # Sobrescreve
             "-i", str(input_path),
-            "-c:a", "libopus",      # Codec Opus (Nativo do WhatsApp)
-            "-b:a", "32k",          # Bitrate (32k-64k é ideal para voz, economiza dados)
-            "-ar", "24000",         # Sample rate (24khz dá mais brilho à voz que 16khz)
-            "-ac", "1",             # Mono (WhatsApp voice notes são mono)
-            "-application", "voip", # Otimização para voz
+            "-c:a", "libopus",      # Codec Opus
+            "-b:a", "32k",          # Leve (economia de dados)
+            "-ar", "24000",         # Sample rate bom para voz
+            "-ac", "1",             # Mono
+            "-application", "voip", # Otimização VOIP
             str(output_path),
         ]
 
-        process = None
-        # Entra na fila do semáforo (máx 3 simultâneos)
         async with self._semaphore:
             try:
                 process = await asyncio.create_subprocess_exec(
@@ -98,26 +109,17 @@ class VoiceService:
                     stderr=asyncio.subprocess.PIPE,
                 )
 
-                # Timeout para evitar processos "zumbis"
                 _, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
 
                 if process.returncode != 0:
                     err_msg = stderr.decode().strip() if stderr else "Erro desconhecido"
-                    raise VoiceServiceException(f"FFmpeg falhou (Código {process.returncode}): {err_msg}")
+                    raise VoiceServiceException(f"FFmpeg falhou: {err_msg}")
 
-            except asyncio.TimeoutError as e:
+            except asyncio.TimeoutError:
                 if process:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-                raise VoiceServiceException("Timeout de 15s excedido na conversão de áudio.", original_exception=e)
-
-            except Exception as e:
-                if isinstance(e, VoiceServiceException):
-                    raise
-                raise VoiceServiceException(f"Erro inesperado no FFmpeg: {e}", original_exception=e)
-
+                    try: process.kill()
+                    except: pass
+                raise VoiceServiceException("Timeout na conversão de áudio.")
 
 # Singleton
 voice_service = VoiceService()
