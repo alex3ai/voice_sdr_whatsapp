@@ -40,8 +40,6 @@ logs/
 *.log
 tmp/
 temp/
-.aiexclude
-/.ai
 # Ignora áudios gerados localmente durante testes
 *.mp3
 *.ogg

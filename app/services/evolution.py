@@ -244,5 +244,49 @@ class EvolutionService:
             log_success="📤 Áudio enviado (Fallback sendMedia)."
         )
 
+    async def get_history(self, remote_jid: str, limit: int = 10) -> list:
+        """
+        Busca as últimas mensagens do chat para contexto.
+        Endpoint: POST /chat/findMessages/{instance}
+        """
+        url = f"{self.base_url}/chat/findMessages/{self.instance_name}"
+        
+        # Payload padrão do Prisma/Evolution para filtrar mensagens
+        payload = {
+            "where": {
+                "key": {
+                    "remoteJid": remote_jid
+                }
+            },
+            "options": {
+                "limit": limit,
+                "sort": "DESC" # Pega as mais recentes
+            }
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url, 
+                    json=payload, 
+                    headers=self.headers, 
+                    timeout=10.0
+                )
+                
+            if response.status_code == 200:
+                # A Evolution retorna: {"messages": {"records": [...]}} ou lista direta
+                data = response.json()
+                messages = data.get("messages", {}).get("records", [])
+                
+                # Inverte para ordem cronológica (Antiga -> Nova) para a IA entender a linha do tempo
+                return sorted(messages, key=lambda x: x["key"]["timestamp"]) if messages else []
+            
+            logger.warning(f"⚠️ Falha ao buscar histórico: {response.text}")
+            return []
+
+        except Exception as e:
+            logger.error(f"❌ Erro de conexão (Histórico): {e}")
+            return []
+
 # Singleton
 evolution_service = EvolutionService()

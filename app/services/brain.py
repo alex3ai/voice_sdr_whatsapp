@@ -92,35 +92,52 @@ class BrainService:
             logger.error(f"❌ Erro na transcrição (Groq): {e}")
             return ""
 
-    async def process_audio_and_respond(self, audio_path: str | pathlib.Path) -> str:
+    # from app.services.evolution import evolution_service
+
+    async def process_audio_and_respond(self, audio_path: str | pathlib.Path, remote_jid: str) -> str:
         """
-        Pipeline: Ouvir (Groq) -> Pensar (DeepSeek)
+        Pipeline: Ouvir (Groq) -> Lembrar (Evolution) -> Pensar (DeepSeek)
         """
         try:
-            # 1. Ouvir
+            # 1. Ouvir (Transcrição)
             user_text = await self.transcribe_audio(str(audio_path))
             
-            # Se o áudio estava vazio ou inaudível
             if not user_text or len(user_text) < 2: 
                 return "Oi, não consegui te ouvir direito. Pode mandar de novo?"
 
-            # 2. Pensar
+            # 2. Lembrar (Busca histórico na Evolution)
+            # Importação local para evitar ciclo de importação circular, se necessário
+            from app.services.evolution import evolution_service 
+            
+            history_data = await evolution_service.get_history(remote_jid, limit=5)
+            
+            # Formata histórico para o padrão OpenAI
+            messages_context = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+            
+            for msg in history_data:
+                # Filtra apenas texto/conversas válidas
+                content = msg.get("message", {}).get("conversation") or \
+                          msg.get("message", {}).get("extendedTextMessage", {}).get("text")
+                
+                if content:
+                    role = "assistant" if msg["key"]["fromMe"] else "user"
+                    messages_context.append({"role": role, "content": content})
+
+            # Adiciona a mensagem atual do usuário
+            messages_context.append({"role": "user", "content": user_text})
+
+            # 3. Pensar (Envia tudo para a IA)
             response = await self.client_brain.chat.completions.create(
                 model=self.model_brain,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_text}
-                ],
+                messages=messages_context, # Agora com histórico!
                 temperature=0.6,
                 max_tokens=150
             )
 
             reply = response.choices[0].message.content
-            
-            # Limpeza
             clean_reply = reply.strip().replace('"', '').replace("*", "")
             
-            logger.info(f"🧠 Cérebro Respondeu: {clean_reply}")
+            logger.info(f"🧠 Cérebro Respondeu (com contexto): {clean_reply}")
             return clean_reply
 
         except Exception as e:

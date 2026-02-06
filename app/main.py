@@ -289,7 +289,10 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, 
         logger.info(f"📥 [Pipeline] Áudio baixado em: {input_path}")
 
         # 2. Inteligência (Brain já transcreve e raciocina)
-        response_text = await brain_service.process_audio_and_respond(input_path)
+        response_text = await brain_service.process_audio_and_respond(
+            input_path,
+            remote_jid=phone_jid
+        )
         
         # Fallback de segurança se a IA falhar (ex: Rate Limit)
         if not response_text: 
