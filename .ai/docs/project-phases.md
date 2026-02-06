@@ -13,6 +13,7 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 -   [ ] **1.3.** Validar o fluxo de recuperação de histórico de conversas (`/chat/findMessages`) para garantir que o contexto está sendo enviado corretamente à IA em todas as interações.
 -   [ ] **1.4.** Criar uma suíte de testes unitários para os serviços essenciais: `brain.py`, `evolution.py` e `voice.py`.
 -   [ ] **1.5.** Mover a lógica de processamento do webhook em `main.py` para uma função dedicada em `app/services/brain.py` para melhorar a organização.
+-   [x] **1.6.** Migração de TTS para Azure REST e STT para Groq.
 
 ---
 

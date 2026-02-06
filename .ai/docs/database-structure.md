@@ -2,12 +2,24 @@
 
 Este documento descreve a arquitetura de dados, esquemas de banco de dados e a estratégia de persistência utilizada no projeto **Voice SDR WhatsApp**.
 
-## 1. Resumo da Infraestrutura de Dados
+## 1. Arquitetura de Dados e Serviços
 
-O projeto utiliza dois serviços de dados essenciais que dão suporte à **Evolution API**. Embora a aplicação `sdr-bot` seja *stateless* (não mantém banco próprio), ela depende inteiramente da integridade desses dados para recuperar o contexto das conversas.
+A arquitetura do projeto é dividida em dois componentes principais: a **Evolution API**, que gerencia a comunicação com o WhatsApp e a persistência dos dados, e o **SDR Bot**, que contém a lógica de negócio e a inteligência artificial.
 
-*   **PostgreSQL:** Banco de dados relacional (*Source of Truth*). Armazena o histórico de mensagens, contatos e configurações das instâncias. É fundamental para a memória da IA.
-*   **Redis:** Armazenamento em memória (*Cache*). Gerencia sessões do WhatsApp (Baileys), filas de processamento e cache de mensagens recentes para alta performance.
+### a. Infraestrutura da Evolution API
+
+A Evolution API é a camada responsável por toda a interação com a plataforma do WhatsApp. Ela depende de dois serviços de dados essenciais:
+
+*   **PostgreSQL:** Atua como o banco de dados principal (*Source of Truth*). Armazena o histórico de mensagens, contatos e configurações das instâncias, garantindo a memória de longo prazo para as interações.
+*   **Redis:** Utilizado como um armazenamento em memória de alta performance (*Cache*). Gerencia as sessões ativas do WhatsApp (Baileys), filas de processamento e armazena dados temporários para agilizar as operações.
+
+### b. Arquitetura do SDR Bot
+
+O **SDR Bot** (`sdr-bot`) é a aplicação que implementa o agente de vendas inteligente. Sua arquitetura foi projetada para ser desacoplada e eficiente:
+
+*   **Imagem Leve:** O bot é executado em um contêiner Docker baseado na imagem `python:3.10-slim`, garantindo um ambiente de execução enxuto e com baixo consumo de recursos.
+*   **Stateless e Desacoplado:** A aplicação é *stateless*, ou seja, não mantém um banco de dados próprio. Ela consome os dados exclusivamente através da **Evolution API**.
+*   **Sem Dependência de Drivers:** Por interagir apenas com a API via REST, o `sdr-bot` não necessita de drivers de banco de dados (como `psycopg2`) ou qualquer conexão direta com o PostgreSQL ou Redis. Isso simplifica sua configuração e o torna mais seguro e fácil de manter.
 
 ## 2. Serviços de Dados
 
