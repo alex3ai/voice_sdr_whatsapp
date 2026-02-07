@@ -1,5 +1,5 @@
 """
-Serviço de integração com Evolution API V2 (Corrigido Fluxo de Reconexão e PTT)
+Serviço de integração com Evolution API V2 (Corrigido Fluxo de Reconexão, PTT e Histórico)
 """
 import asyncio
 import base64
@@ -53,7 +53,7 @@ class EvolutionService:
                     method, url, headers=self.headers, **kwargs
                 )
                 
-                # CORREÇÃO: Tratamos o 403 como erro para o create_instance capturar
+                # Tratamos o 403 como erro para o create_instance capturar
                 response.raise_for_status()
 
                 if log_success:
@@ -69,7 +69,7 @@ class EvolutionService:
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            # Se for 403 (Instance already exists), lançamos erro específico para capturar no create
+            # Se for 403 (Instance already exists), lançamos erro específico
             if e.response.status_code == 403:
                 raise EvolutionApiException("InstanceConflict", original_exception=e)
 
@@ -83,7 +83,6 @@ class EvolutionService:
             raise EvolutionApiException(err_msg, original_exception=e)
             
         except Exception as e:
-            # Se já for nossa exceção, repassa
             if isinstance(e, EvolutionApiException):
                 raise e
                 
@@ -104,12 +103,9 @@ class EvolutionService:
             return await self._request("POST", "instance/create", json_data=payload)
         
         except EvolutionApiException as e:
-            # Se o erro for conflito (já existe), conectamos para pegar o QR
             if "InstanceConflict" in str(e):
                 logger.warning(f"⚠️ Instância já existe. Buscando QR Code...")
                 return await self.connect_instance()
-            
-            # Outros erros
             return {"error": str(e)}
 
     async def connect_instance(self) -> Dict[str, Any]:
@@ -249,9 +245,9 @@ class EvolutionService:
         Busca as últimas mensagens do chat para contexto.
         Endpoint: POST /chat/findMessages/{instance}
         """
-        url = f"{self.base_url}/chat/findMessages/{self.instance_name}"
+        # CORREÇÃO: Usar _request em vez de httpx direto para consistência
+        endpoint = f"chat/findMessages/{self.instance_name}"
         
-        # Payload padrão do Prisma/Evolution para filtrar mensagens
         payload = {
             "where": {
                 "key": {
@@ -265,23 +261,18 @@ class EvolutionService:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                
-            if response.status_code == 200:
-                # A Evolution retorna: {"messages": {"records": [...]}} ou lista direta
-                data = response.json()
-                messages = data.get("messages", {}).get("records", [])
-                
-                # Inverte para ordem cronológica (Antiga -> Nova) para a IA entender a linha do tempo
-                return sorted(messages, key=lambda x: x["key"]["timestamp"]) if messages else []
+            response_data = await self._request("POST", endpoint, json_data=payload)
             
-            logger.warning(f"⚠️ Falha ao buscar histórico: {response.text}")
+            # Verifica se retornou dados válidos
+            if isinstance(response_data, dict):
+                messages = response_data.get("messages", {}).get("records", [])
+                
+                # CORREÇÃO CRÍTICA DO ERRO DE TIMESTAMP:
+                # A API já retorna ordenado DESC (Mais novo -> Mais antigo).
+                # A IA precisa ler cronologicamente (Antigo -> Novo).
+                # Simplesmente invertemos a lista. Isso evita erros de chave 'timestamp'.
+                return messages[::-1] if messages else []
+            
             return []
 
         except Exception as e:

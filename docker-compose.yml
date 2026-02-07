@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   # ========================================
-  # 1. Banco de Dados (Agora com Volume Interno)
+  # 1. Banco de Dados (Postgres)
   # ========================================
   postgres:
     image: postgres:15
@@ -13,11 +13,9 @@ services:
       - POSTGRES_PASSWORD=evolution
       - POSTGRES_DB=evolution
     volumes:
-      # MUDANÇA CRÍTICA: Usando volume interno (rápido e seguro no Windows)
       - evolution_postgres_data:/var/lib/postgresql/data
     networks:
       - voice_sdr_network
-    # Healthcheck mais tolerante para a primeira inicialização
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
       interval: 10s
@@ -43,7 +41,7 @@ services:
       retries: 5
 
   # ========================================
-  # 3. Evolution API (Configuração BLINDADA)
+  # 3. Evolution API V2
   # ========================================
   evolution-api:
     image: evoapicloud/evolution-api:v2.3.0
@@ -57,7 +55,6 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
-      - 1.1.1.1
     shm_size: '2gb' 
     ports:
       - "8080:8080"
@@ -118,6 +115,11 @@ services:
     environment:
       - EVOLUTION_API_URL=http://evolution-api:8080
       - EVOLUTION_API_KEY=123456
+    volumes:
+      # --- PERSISTÊNCIA DE MEMÓRIA ---
+      # Mapeia o arquivo do host para o container.
+      # Importante: Crie este arquivo vazio no Windows antes de rodar.
+      - ./chat_history.json:/app/chat_history.json
     networks:
       - voice_sdr_network
 
@@ -131,4 +133,4 @@ networks:
 volumes:
   evolution_instances:
   evolution_store:
-  evolution_postgres_data: # Volume novo para o Banco
+  evolution_postgres_data:

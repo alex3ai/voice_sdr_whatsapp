@@ -1,10 +1,12 @@
 """
 Serviço de Inteligência Artificial Híbrido.
-Ouvido: Groq (Whisper) - Rápido e Gratuito.
-Cérebro: OpenRouter (DeepSeek/Llama) - Inteligente.
+Ouvido: Groq (Whisper)
+Cérebro: OpenRouter (DeepSeek/Llama)
+Memória: Persistência em Arquivo JSON (Resistente a reinicializações do Docker)
 """
 import pathlib
 import os
+import json
 from openai import AsyncOpenAI
 from app.config import settings
 from app.utils.logger import setup_logger
@@ -13,7 +15,7 @@ logger = setup_logger(__name__)
 
 class BrainService:
     """
-    Gerenciador de raciocínio e audição.
+    Gerenciador de raciocínio, audição e memória persistente.
     """
 
     # Prompt de Vendas
@@ -33,7 +35,6 @@ class BrainService:
 
     def __init__(self):
         # 1. Configura o CÉREBRO (Texto -> Texto)
-        # Usa as configurações do config.py (OpenRouter/DeepSeek)
         try:
             self.client_brain = AsyncOpenAI(
                 api_key=settings.openai_api_key,
@@ -46,7 +47,6 @@ class BrainService:
             raise
 
         # 2. Configura o OUVIDO (Áudio -> Texto)
-        # Usa a Groq Cloud (Whisper-large-v3) que é extremamente rápida
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         
         if self.groq_api_key:
@@ -57,31 +57,68 @@ class BrainService:
             logger.info("👂 Ouvido ativado: Whisper via Groq.")
         else:
             self.client_ear = None
-            logger.warning("⚠️ Chave GROQ_API_KEY não encontrada no .env. O bot continuará 'fingindo' que ouviu.")
+            logger.warning("⚠️ Chave GROQ_API_KEY não encontrada. Modo surdo.")
+
+        # --- MEMÓRIA PERSISTENTE (JSON) ---
+        # Carrega o histórico do arquivo ao iniciar
+        self.history_file = pathlib.Path("chat_history.json")
+        self.sessions = self._load_memory()
+
+    def _load_memory(self) -> dict:
+        """Carrega histórico do disco se existir"""
+        if self.history_file.exists():
+            try:
+                with open(self.history_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    logger.info(f"📂 Memória carregada: {len(data)} conversas recuperadas.")
+                    return data
+            except Exception as e:
+                logger.error(f"⚠️ Erro ao carregar memória (iniciando vazia): {e}")
+        return {}
+
+    def _save_memory(self):
+        """Salva histórico no disco"""
+        try:
+            with open(self.history_file, "w", encoding="utf-8") as f:
+                json.dump(self.sessions, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"❌ Erro ao salvar memória: {e}")
+
+    def _update_memory(self, remote_jid: str, role: str, content: str):
+        """Atualiza memória e salva no disco imediatamente"""
+        if remote_jid not in self.sessions:
+            self.sessions[remote_jid] = []
+        
+        # Adiciona nova mensagem ao histórico
+        self.sessions[remote_jid].append({"role": role, "content": content})
+        
+        # Mantém apenas as últimas 20 interações (Janela de Contexto)
+        if len(self.sessions[remote_jid]) > 20:
+            self.sessions[remote_jid] = self.sessions[remote_jid][-20:]
+            
+        # Persiste a alteração no arquivo
+        self._save_memory()
 
     async def transcribe_audio(self, audio_path: str) -> str:
         """
-        Transcreve o áudio usando Groq Whisper (Real) ou Fallback (Simulado).
+        Transcreve o áudio usando Groq Whisper.
         """
-        # Modo Simulação (se não tiver chave)
         if not self.client_ear:
-            logger.warning("Simulando audição (Adicione GROQ_API_KEY no .env para corrigir)")
-            return "Olá, vi seu anúncio no Instagram e quero saber mais."
+            logger.warning("Simulando audição (Sem chave Groq)")
+            return "Olá, gostaria de saber mais."
 
-        # Modo Real (Groq)
         try:
             path_obj = pathlib.Path(audio_path)
             if not path_obj.exists():
                 logger.error(f"Arquivo de áudio não existe: {audio_path}")
                 return ""
 
-            # Abre o arquivo e envia para a Groq
             with open(path_obj, "rb") as audio_file:
                 transcription = await self.client_ear.audio.transcriptions.create(
                     file=audio_file,
-                    model="whisper-large-v3", # Melhor modelo open-source atual
+                    model="whisper-large-v3", 
                     response_format="text",
-                    language="pt" # Força português para evitar alucinações
+                    language="pt" 
                 )
             
             text_result = str(transcription).strip()
@@ -92,11 +129,9 @@ class BrainService:
             logger.error(f"❌ Erro na transcrição (Groq): {e}")
             return ""
 
-    # from app.services.evolution import evolution_service
-
     async def process_audio_and_respond(self, audio_path: str | pathlib.Path, remote_jid: str) -> str:
         """
-        Pipeline: Ouvir (Groq) -> Lembrar (Evolution) -> Pensar (DeepSeek)
+        Pipeline: Ouvir -> Carregar Contexto -> Pensar -> Salvar Contexto
         """
         try:
             # 1. Ouvir (Transcrição)
@@ -105,39 +140,32 @@ class BrainService:
             if not user_text or len(user_text) < 2: 
                 return "Oi, não consegui te ouvir direito. Pode mandar de novo?"
 
-            # 2. Lembrar (Busca histórico na Evolution)
-            # Importação local para evitar ciclo de importação circular, se necessário
-            from app.services.evolution import evolution_service 
-            
-            history_data = await evolution_service.get_history(remote_jid, limit=5)
-            
-            # Formata histórico para o padrão OpenAI
-            messages_context = [{"role": "system", "content": self.SYSTEM_PROMPT}]
-            
-            for msg in history_data:
-                # Filtra apenas texto/conversas válidas
-                content = msg.get("message", {}).get("conversation") or \
-                          msg.get("message", {}).get("extendedTextMessage", {}).get("text")
-                
-                if content:
-                    role = "assistant" if msg["key"]["fromMe"] else "user"
-                    messages_context.append({"role": role, "content": content})
+            # 2. Atualizar Memória com a fala do usuário
+            self._update_memory(remote_jid, "user", user_text)
 
-            # Adiciona a mensagem atual do usuário
-            messages_context.append({"role": "user", "content": user_text})
+            # 3. Construir Contexto para a IA
+            messages_payload = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+            
+            if remote_jid in self.sessions:
+                messages_payload.extend(self.sessions[remote_jid])
 
-            # 3. Pensar (Envia tudo para a IA)
+            # 4. Pensar (Envia histórico completo)
             response = await self.client_brain.chat.completions.create(
                 model=self.model_brain,
-                messages=messages_context, # Agora com histórico!
+                messages=messages_payload,
                 temperature=0.6,
                 max_tokens=150
             )
 
             reply = response.choices[0].message.content
+            
+            # Limpeza da resposta
             clean_reply = reply.strip().replace('"', '').replace("*", "")
             
-            logger.info(f"🧠 Cérebro Respondeu (com contexto): {clean_reply}")
+            # 5. Atualizar Memória com a resposta do Bot
+            self._update_memory(remote_jid, "assistant", clean_reply)
+            
+            logger.info(f"🧠 Cérebro Respondeu: {clean_reply}")
             return clean_reply
 
         except Exception as e:
