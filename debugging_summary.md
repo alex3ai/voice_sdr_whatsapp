@@ -1,6 +1,6 @@
 # 🤖 CONTEXTO DO PROJETO & DIRETRIZES DE MANUTENÇÃO
 
-> **INSTRUÇÃO PARA O GEMINI CODE ASSIST:**
+> **INSTRUÇÃO PARA O ASSISTENTE DE INTELIGÊNCIA ARTIFICIAL:**
 > Este arquivo atua como a "Memória de Longo Prazo" do projeto. Ao atualizá-lo, siga estritamente:
 > 1.  **Abstração:** Não cole trechos de código. Descreva apenas a lógica, fluxo de dados e responsabilidade dos arquivos.
 > 2.  **Objetividade:** Mantenha o resumo da arquitetura focado em "Quem faz o quê" (Ex: Main orquestra, Brain processa IA, Voice gera áudio).
@@ -13,7 +13,7 @@
 - **Comunicação WhatsApp:** Evolution API (V2)
 - **Containerização:** Docker & Docker Compose
 - **IA - Transcrição (Audio-to-Text):** Groq Cloud (usando o modelo Whisper-large-v3)
-- **IA - Raciocínio (Text-to-Text):** OpenRouter (atuando como gateway para LLMs como o GLM-4.5)
+- **IA - Raciocínio (Text-to-Text):** OpenRouter (atuando como gateway para LLMs como o GLM-4.5 ou DeepSeek)
 - **IA - Síntese de Voz (Text-to-Speech):** Azure Cognitive Services (via API REST)
 - **Libs de HTTP Assíncrono:** `httpx` (cliente principal) e `aiohttp` (para o serviço de voz)
 - **Configuração:** Pydantic (para carregar e validar variáveis de ambiente)
@@ -27,6 +27,7 @@
 - `app/utils/logger.py`: **O Escriba.** Configura um sistema de logging robusto para registrar eventos da aplicação, tanto no console quanto em arquivos, facilitando a depuração.
 - `app/utils/files.py`: **O Zelador.** Gerencia o ciclo de vida de arquivos temporários (áudios baixados e gerados), garantindo sua criação em um diretório seguro e a limpeza automática para não sobrecarregar o sistema.
 - `app/utils/exceptions.py`: **O Tratador de Erros.** Define classes de exceção personalizadas para cada serviço, permitindo que o código capture e lide com falhas de forma mais específica e organizada.
+- `app/models/webhook.py`: **Modelo de Dados.** Define a estrutura dos dados recebidos via webhook da Evolution API, facilitando o tratamento das mensagens recebidas.
 - `docker-compose.yml`: **O Maestro do Ambiente.** Define e orquestra os contêineres Docker necessários para rodar a aplicação e seus serviços dependentes (se houver) em um ambiente isolado e consistente.
 - `dockerfile`: **A Receita do Contêiner.** Contém as instruções passo a passo para construir a imagem Docker da aplicação, instalando dependências e configurando o ambiente de execução.
 
@@ -34,3 +35,5 @@
 - ✅ **Erro 2176 (Azure SDK):** Substituído SDK pesado por API REST via `aiohttp`. Resolvido conflito de dependências Linux.
 - ✅ **Loop de Conexão:** Implementado `asyncio.Lock` no endpoint `/qrcode`.
 - ✅ **Voz Robótica:** Configurado SSML para voz `pt-BR-AntonioNeural` via Azure.
+- ✅ **Substituição do Gemini:** Migrado de Gemini para OpenRouter com modelo GLM-4.5 ou DeepSeek para maior flexibilidade.
+- ✅ **Melhoria no STT:** Adotado Groq Whisper para transcrição mais rápida e precisa.

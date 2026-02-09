@@ -26,7 +26,7 @@
     -   Evita que o sistema "morra" silenciosamente.
 -   **Critérios de Aceitação:**
     -   Falhas na comunicação com a Evolution API devem ser registradas com detalhes (endpoint, status code).
-    -   Erros na API do Gemini (ex: conteúdo inapropriado, falha na transcrição) devem ser tratados de forma específica.
+    -   Erros na API do OpenRouter (ex: conteúdo inapropriado, falha na transcrição) devem ser tratados de forma específica.
     -   Falhas na geração de áudio (TTS) devem ser capturadas.
     -   Implementar um sistema de *retries* com *exponential backoff* para falhas de rede.
     -   (Opcional) Enviar uma notificação (ex: para um canal do Slack ou Telegram) quando ocorrerem erros críticos.
@@ -43,7 +43,7 @@
 -   **Critérios de Aceitação:**
     -   O webhook deve ser capaz de diferenciar entre uma mensagem de áudio e uma de texto.
     -   Se a mensagem for de texto, o pipeline deve pular as etapas de download e transcrição de áudio.
-    -   O texto da mensagem deve ser enviado diretamente ao "cérebro" (Gemini).
+    -   O texto da mensagem deve ser enviado diretamente ao "cérebro" (OpenRouter).
     -   A resposta pode ser em áudio (padrão) ou em texto, dependendo da configuração.
 
 ---

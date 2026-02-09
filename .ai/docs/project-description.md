@@ -19,7 +19,7 @@ A solução é construída sobre um ecossistema de serviços containerizados, or
 
 ### Serviços Essenciais:
 -   **WhatsApp Gateway:** Evolution API (Imagem Docker `evoapicloud/evolution-api:v2.3.0`)
--   **Inteligência Artificial (Cérebro):** Arquitetura híbrida com Groq (Whisper) para transcrição e OpenRouter (DeepSeek/Llama) para inteligência.
+-   **Inteligência Artificial (Cérebro):** Arquitetura híbrida com Groq (Whisper) para transcrição e OpenRouter (GLM-4.5/DeepSeek/Llama) para inteligência.
 -   **Conversão de Texto para Fala (TTS):** Azure Cognitive Services (API REST)
 -   **Banco de Dados (para Evolution API):** PostgreSQL 15
 -   **Cache (para Evolution API):** Redis
@@ -40,7 +40,7 @@ A arquitetura é baseada em microsserviços desacoplados que se comunicam atrav�
     2.  O `sdr-bot` recebe o evento e inicia uma tarefa em background para não bloquear a API.
     3.  **Download:** O áudio é baixado da Evolution API.
     4.  **Transcrição (Ouvido):** O arquivo de áudio é enviado para a API do **Groq**, que utiliza o modelo **Whisper** para transcrevê-lo rapidamente.
-    5.  **Inteligência (Cérebro):** O texto transcrito é enviado para a **OpenRouter**, que utiliza um modelo como **DeepSeek** ou **Llama**, para gerar uma resposta textual contextualizada.
+    5.  **Inteligência (Cérebro):** O texto transcrito é enviado para a **OpenRouter**, que utiliza um modelo como **GLM-4.5**, **DeepSeek** ou **Llama**, para gerar uma resposta textual contextualizada.
     6.  **Geração de Voz (TTS):** O texto gerado pela IA é convertido em um novo arquivo de áudio usando a API REST do **Azure Cognitive Services**.
     7.  **Envio da Resposta:** O novo áudio é enviado de volta para a Evolution API, que o encaminha para o usuário no WhatsApp como uma resposta à mensagem original.
 -   **Camadas da Aplicação (`app/`):**
@@ -49,7 +49,9 @@ A arquitetura é baseada em microsserviços desacoplados que se comunicam atrav�
         -   `evolution.py`: Comunicação com a Evolution API.
         -   `brain.py`: Interação com a OpenRouter.
         -   `voice.py`: Geração de áudio.
-    -   `utils/`: Funções auxiliares (logs, manipulação de arquivos).
+    -   `models/`: Modelos de dados para requisições e respostas.
+        -   `webhook.py`: Estrutura dos dados recebidos via webhook da Evolution API.
+    -   `utils/`: Funções auxiliares (logs, manipulação de arquivos, tratamento de exceções).
     -   `config.py`: Gerenciamento de configurações via variáveis de ambiente.
 
 ---

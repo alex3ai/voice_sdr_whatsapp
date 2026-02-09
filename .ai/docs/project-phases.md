@@ -8,12 +8,11 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 **Objetivo:** Fortalecer a base do código existente para garantir que ele seja robusto, testável e preparado para receber novas funcionalidades.
 
--   [x] **1.1.** Revisar e centralizar o tratamento de exceções nos serviços (`app/services/`). Implementar exceções customizadas para falhas de comunicação com APIs externas (Evolution, Gemini).
--   [ ] **1.2.** Padronizar o uso do logger (`app/utils/logger.py`) em todos os módulos, garantindo que os logs sejam estruturados e informativos.
--   [ ] **1.3.** Validar o fluxo de recuperação de histórico de conversas (`/chat/findMessages`) para garantir que o contexto está sendo enviado corretamente à IA em todas as interações.
--   [ ] **1.4.** Criar uma suíte de testes unitários para os serviços essenciais: `brain.py`, `evolution.py` e `voice.py`.
--   [ ] **1.5.** Mover a lógica de processamento do webhook em `main.py` para uma função dedicada em `app/services/brain.py` para melhorar a organização.
--   [x] **1.6.** Migração de TTS para Azure REST e STT para Groq.
+-   [x] **1.1.** Revisar e centralizar o tratamento de exceções nos serviços (`app/services/`). Implementar exceções customizadas para falhas de comunicação com APIs externas (Evolution, OpenRouter).
+-   [x] **1.2.** Padronizar o uso do logger (`app/utils/logger.py`) em todos os módulos, garantindo que os logs sejam estruturados e informativos.
+-   [x] **1.3.** Validar o fluxo de recuperação de histórico de conversas (`/chat/findMessages`) para garantir que o contexto está sendo enviado corretamente à IA em todas as interações.
+-   [x] **1.4.** Mover a lógica de processamento do webhook em`main.py` para uma função dedicada em `app/services/brain.py` para melhorar a organização.
+-   [x] **1.5.** Migração de TTS para Azure REST e STT para Groq.
 
 ---
 
@@ -21,11 +20,11 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 **Objetivo:** Implementar a capacidade do bot de processar e responder a mensagens de texto, além de áudio.
 
--   [ ] **2.1.** Modificar o modelo de dados em `app/models/webhook.py` para tratar eventos de mensagem de texto (`text`).
--   [ ] **2.2.** Atualizar o endpoint do webhook em `main.py` para identificar o tipo de mensagem recebida (áudio vs. texto).
--   [ ] **2.3.** Adaptar a lógica principal para que, ao receber uma mensagem de texto, o fluxo pule as etapas de download e transcrição de áudio.
--   [ ] **2.4.** Adicionar uma variável de ambiente (`RESPONSE_TYPE`) em `app/config.py` para permitir configurar o tipo de resposta (áudio ou texto).
--   [ ] **2.5.** Implementar a lógica de resposta para que o bot envie uma mensagem de texto se `RESPONSE_TYPE` for definido como `text`.
+-   [x] **2.1.** Modificar o modelo de dados em `app/models/webhook.py` para tratar eventos de mensagem de texto (`text`).
+-   [x] **2.2.** Atualizar o endpoint do webhook em  `main.py` para identificar o tipo de mensagem recebida (áudio vs. texto).
+-   [x] **2.3.** Adaptar a lógica principal para que, ao receber uma mensagem de texto, o fluxo pule as etapas de download e transcrição de áudio.
+-   [x] **2.4.** Adicionar uma variável de ambiente (`RESPONSE_TYPE`) em `app/config.py` para permitir configurar o tipo de resposta (áudio ou texto).
+-   [x] **2.5.** Implementar a lógica de resposta para que o bot envie uma mensagem de texto se `RESPONSE_TYPE` for definido como `text`.
 
 ---
 
@@ -34,9 +33,8 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 **Objetivo:** Aumentar a resiliência do sistema com mecanismos avançados de tratamento de falhas.
 
 -   [ ] **3.1.** Implementar uma função *wrapper* ou decorador com lógica de *retries* e *exponential backoff* para todas as chamadas de API externas nos serviços.
--   [ ] **3.2.** Adicionar tratamento específico para códigos de erro da API do Gemini (ex: `prompt feedback` com bloqueio de segurança) no serviço `brain.py`.
--   [ ] **3.3.** Criar um módulo de notificação (`app/services/notification.py`) com uma interface genérica e uma implementação inicial (ex: log para um arquivo crítico ou print no console).
--   [ ] **3.4.** Integrar o serviço de notificação para que erros críticos no pipeline disparem um alerta.
+-   [ ] **3.2.** Criar um módulo de notificação (`app/services/notification.py`) com uma interface genérica e uma implementação inicial (ex: log para um arquivo crítico ou print no console).
+-   [ ] **3.3.** Integrar o serviço de notificação para que erros críticos no pipeline disparem um alerta.
 
 ---
 
@@ -56,5 +54,5 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 **Objetivo:** Capacitar o bot a identificar a intenção de agendamento e coordenar horários com os clientes.
 
--   [ ] **5.3a** (MVP): O bot apenas envia um link do Calendly/Google Agenda para o cliente agendar sozinho. (Fácil, resolve 80% do problema).
--   [ ] **5.3b (Full): Integração via API para agendar diretamente pelo chat (Difícil, fazer só se o 5.3a não converter bem).
+-   [ ] **5.1** (MVP): O bot apenas envia um link do Calendly/Google Agenda para o cliente agendar sozinho. (Fácil, resolve 80% do problema).
+-   [ ] **5.2** (Full): Integração via API para agendar diretamente pelo chat (Difícil, fazer só se o 5.1 não converter bem).

@@ -172,5 +172,45 @@ class BrainService:
             logger.error(f"❌ Erro no cérebro: {e}", exc_info=True)
             return "Oi! Tive um problema técnico. Pode repetir o áudio?"
 
+    async def process_text_and_respond(self, user_text: str, remote_jid: str) -> str:
+        """
+        Processa mensagem de texto diretamente, sem necessidade de transcrição.
+        """
+        try:
+            if not user_text or len(user_text) < 2: 
+                return "Oi, não consegui entender direito. Pode repetir?"
+
+            # 1. Atualizar Memória com a mensagem do usuário
+            self._update_memory(remote_jid, "user", user_text)
+
+            # 2. Construir Contexto para a IA
+            messages_payload = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+            
+            if remote_jid in self.sessions:
+                messages_payload.extend(self.sessions[remote_jid])
+
+            # 3. Pensar (Envia histórico completo)
+            response = await self.client_brain.chat.completions.create(
+                model=self.model_brain,
+                messages=messages_payload,
+                temperature=0.6,
+                max_tokens=150
+            )
+
+            reply = response.choices[0].message.content
+            
+            # Limpeza da resposta
+            clean_reply = reply.strip().replace('"', '').replace("*", "")
+            
+            # 4. Atualizar Memória com a resposta do Bot
+            self._update_memory(remote_jid, "assistant", clean_reply)
+            
+            logger.info(f"🧠 Cérebro Respondeu (texto): {clean_reply}")
+            return clean_reply
+
+        except Exception as e:
+            logger.error(f"❌ Erro no cérebro (texto): {e}", exc_info=True)
+            return "Oi! Tive um problema técnico. Pode repetir a mensagem?"
+
 # Singleton
 brain_service = BrainService()

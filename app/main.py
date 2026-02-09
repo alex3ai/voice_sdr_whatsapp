@@ -55,6 +55,7 @@ app.add_middleware(LogMiddleware)
 metrics = {
     "total_messages": 0,
     "audio_messages": 0,
+    "text_messages": 0,
     "successful_responses": 0,
     "errors": 0,
     "start_time": time.time()
@@ -235,35 +236,43 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
         if key.get("fromMe"): return {"status": "ignored_from_me"}
         if "broadcast" in sender: return {"status": "ignored_broadcast"}
 
-        # 5. Detecta Áudio
+        # 5. Detecta Mensagem de Áudio ou Texto
         msg_type = data.get("messageType")
         is_audio = msg_type == "audioMessage"
+        is_text = msg_type in ["conversation", "extendedTextMessage"]
         
         if msg_type == "ephemeralMessage":
             real_msg = data.get("message", {}).get("ephemeralMessage", {}).get("message", {})
             if "audioMessage" in real_msg:
                 is_audio = True
                 data["message"] = real_msg 
+            elif "conversation" in real_msg or "extendedTextMessage" in real_msg:
+                is_text = True
+                data["message"] = real_msg
 
-        if not is_audio:
-            metrics["total_messages"] += 1
-            return {"status": "ignored_not_audio"}
+        # Incrementa contador de mensagens
+        if is_audio:
+            metrics["audio_messages"] += 1
+        elif is_text:
+            metrics["text_messages"] += 1
+        else:
+            return {"status": "ignored_not_supported"}
 
         # 6. Processamento
         metrics["total_messages"] += 1
-        metrics["audio_messages"] += 1
-        
+
         # CORREÇÃO: Usa o remoteJid completo para evitar Erro 400
         phone_jid = sender 
         msg_id = key.get("id")
 
-        logger.info(f"🎤 Áudio VÁLIDO recebido de {phone_jid}. Iniciando pipeline...")
+        logger.info(f"{'🎤 Áudio' if is_audio else '💬 Texto'} VÁLIDO recebido de {phone_jid}. Iniciando pipeline...")
 
         background_tasks.add_task(
             pipeline_sales_response,
             message_data=data,
             phone_jid=phone_jid,
-            message_id=msg_id
+            message_id=msg_id,
+            is_audio=is_audio
         )
 
         return {"status": "processing"}
@@ -273,27 +282,48 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
         return {"status": "error_handled"}
 
 
-async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, message_id: str):
-    """Pipeline: Download -> IA -> Voz -> Envio"""
+async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, message_id: str, is_audio: bool = True):
+    """Pipeline: Download -> IA -> Voz -> Envio (ou Texto -> IA -> Texto -> Envio)"""
     logger.info(f"🚀 [Pipeline] Iniciando para {phone_jid}...")
     input_path = None
     output_path = None
     
     try:
-        # 1. Download
-        input_path = await evolution_service.download_media(message_data)
-        if not input_path:
-            logger.error("❌ [Pipeline] Falha no download do áudio.")
-            return
+        # 1. Processamento de áudio ou texto
+        if is_audio:
+            # 1a. Download e transcrição de áudio
+            input_path = await evolution_service.download_media(message_data)
+            if not input_path:
+                logger.error("❌ [Pipeline] Falha no download do áudio.")
+                return
 
-        logger.info(f"📥 [Pipeline] Áudio baixado em: {input_path}")
+            logger.info(f"📥 [Pipeline] Áudio baixado em: {input_path}")
 
-        # 2. Inteligência (Brain já transcreve e raciocina)
-        response_text = await brain_service.process_audio_and_respond(
-            input_path,
-            remote_jid=phone_jid
-        )
-        
+            # 2. Inteligência (Brain já transcreve e raciocina)
+            response_text = await brain_service.process_audio_and_respond(
+                input_path,
+                remote_jid=phone_jid
+            )
+        else:
+            # 1b. Processamento de mensagem de texto
+            # Extrai o conteúdo da mensagem de texto
+            message_content = message_data.get("message", {})
+            text_content = message_content.get("conversation") or (
+                message_content.get("extendedTextMessage", {}).get("text") if "extendedTextMessage" in message_content else None
+            )
+            
+            if not text_content:
+                logger.error("❌ [Pipeline] Conteúdo da mensagem de texto inválido.")
+                return
+
+            logger.info(f"📝 [Pipeline] Texto recebido: {text_content}")
+
+            # 2. Inteligência (Processa o texto diretamente)
+            response_text = await brain_service.process_text_and_respond(
+                text_content,
+                remote_jid=phone_jid
+            )
+
         # Fallback de segurança se a IA falhar (ex: Rate Limit)
         if not response_text: 
             response_text = "Desculpe, tive um problema técnico momentâneo. Poderia repetir?"
@@ -301,19 +331,27 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, 
 
         logger.info(f"🤖 [Pipeline] IA: {response_text[:50]}...")
 
-        # 3. Voz
-        output_path = await voice_service.generate_audio(response_text)
+        # 3. Decidir tipo de resposta baseado na configuração
+        if settings.response_type == "audio":
+            # Gera áudio
+            output_path = await voice_service.generate_audio(response_text)
 
-        # 4. Envio
-        if output_path:
-            logger.info("🎙️ [Pipeline] Enviando áudio de resposta...")
-            await evolution_service.send_audio(phone_jid, str(output_path), quoted_id=message_id)
+            # 4. Envio
+            if output_path:
+                logger.info("🎙️ [Pipeline] Enviando áudio de resposta...")
+                await evolution_service.send_audio(phone_jid, str(output_path), quoted_id=message_id)
+                metrics["successful_responses"] += 1
+                logger.info("✅ [Pipeline] Sucesso!")
+            else:
+                # Fallback final (Texto)
+                await evolution_service.send_text(phone_jid, response_text)
+                logger.warning("⚠️ [Pipeline] Falha no áudio, enviado texto.")
+        else:
+            # Envia resposta como texto
+            logger.info("💬 [Pipeline] Enviando texto de resposta...")
+            await evolution_service.send_text(phone_jid, response_text)
             metrics["successful_responses"] += 1
             logger.info("✅ [Pipeline] Sucesso!")
-        else:
-            # Fallback final (Texto)
-            await evolution_service.send_text(phone_jid, response_text)
-            logger.warning("⚠️ [Pipeline] Falha no áudio, enviado texto.")
 
     except Exception as e:
         logger.error(f"💥 [Pipeline] Erro crítico: {e}", exc_info=True)

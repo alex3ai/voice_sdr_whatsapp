@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Edge-TTS é o primário, gTTS entra como fallback se falhar
     edge_tts_voice: str = Field(default="pt-BR-AntonioNeural")
     
+    # Tipo de resposta (áudio ou texto)
+    response_type: Literal["audio", "text"] = Field(default="audio", description="Tipo de resposta enviada ao usuário")
+    
     # Limites
     download_timeout: int = 60
     max_audio_size_mb: int = 16

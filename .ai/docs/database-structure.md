@@ -5,7 +5,33 @@ Este documento descreve a arquitetura de dados, esquemas de banco de dados e a e
 ## 1. Arquitetura de Dados e Serviços
 
 A arquitetura do projeto é dividida em dois componentes principais: a **Evolution API**, que gerencia a comunicação com o WhatsApp e a persistência dos dados, e o **SDR Bot**, que contém a lógica de negócio e a inteligência artificial.
+# Plano de Execução do Projeto: Voice SDR WhatsApp
 
+Este documento detalha as fases e tarefas planejadas para a evolução do projeto, com base nas `User Stories` e no estado atual da aplicação.
+
+---
+
+## Fase 1: Refatoração e Adequação
+
+**Objetivo:** Fortalecer a base do código existente para garantir que ele seja robusto, testável e preparado para receber novas funcionalidades.
+
+-   [x] **1.1.** Revisar e centralizar o tratamento de exceções nos serviços (`app/services/`). Implementar exceções customizadas para falhas de comunicação com APIs externas (Evolution, Gemini).
+-   [x] **1.2.** Padronizar o uso do logger (`app/utils/logger.py`) em todos os módulos, garantindo que os logs sejam estruturados e informativos.
+-   [x] **1.3.** Validar o fluxo de recuperação de histórico de conversas (`/chat/findMessages`) para garantir que o contexto está sendo enviado corretamente à IA em todas as interações.
+-   [x] **1.4.** Mover a lógica de processamento do webhook em `main.py` para uma função dedicada em `app/services/brain.py` para melhorar a organização.
+-   [x] **1.5.** Migração de TTS para Azure REST e STT para Groq.
+
+---
+
+## Fase 2: Suporte a Múltiplos Tipos de Mensagem
+
+**Objetivo:** Implementar a capacidade do bot de processar e responder a mensagens de texto, além de áudio.
+
+-   [x] **2.1.** Modificar o modelo de dados em `app/models/webhook.py` para tratar eventos de mensagem de texto.
+-   [x] **2.2.** Atualizar o endpoint do webhook em `main.py` para identificar o tipo de mensagem recebida (áudio vs. texto).
+-   [x] **2.3.** Adaptar a lógica principal para que, ao receber uma mensagem de texto, o fluxo pule as etapas de download e transcrição de áudio.
+-   [x] **2.4.** Adicionar uma variável de ambiente (`RESPONSE_TYPE`)
+  
 ### a. Infraestrutura da Evolution API
 
 A Evolution API é a camada responsável por toda a interação com a plataforma do WhatsApp. Ela depende de dois serviços de dados essenciais:
@@ -53,7 +79,7 @@ Para garantir a durabilidade dos dados entre reinicializações de contêineres 
 
 A Evolution API v2 utiliza o **Prisma ORM** para gerenciar o esquema do banco. A aplicação `sdr-bot` não acessa o banco diretamente via SQL, mas consome esses dados através dos endpoints REST da Evolution API (ex: `/chat/findMessages`).
 
-Para que a Inteligência Artificial (Gemini) tenha memória, a variável de ambiente `DATABASE_SAVE_DATA_NEW_MESSAGE=true` foi ativada na Evolution API. Isso garante que cada interação seja salva na tabela `Message` do Postgres.
+Para que a Inteligência Artificial (OpenRouter/Groq) tenha memória, a variável de ambiente `DATABASE_SAVE_DATA_NEW_MESSAGE=true` foi ativada na Evolution API. Isso garante que cada interação seja salva na tabela `Message` do Postgres.
 
 ### Tabela Lógica: Message (Abstração)
 
@@ -69,12 +95,8 @@ Abaixo, a representação dos dados que a Evolution API persiste e entrega ao `s
 | **messageType** | `String` | `data.messageType` | Ex: `audioMessage`, `conversation`, `extendedTextMessage`. |
 | **body** | `Text` | `data.message...` | O conteúdo transcrito ou textual da mensagem. |
 | **mediaUrl** | `Text` | `data.message.audioMessage.url` | Link interno para o arquivo de áudio (se houver). |
-| **createdAt** | `DateTime` | `date_time` | Timestamp da mensagem. Usado para ordenar o histórico enviado ao Gemini. |
+| **createdAt** | `DateTime` | `date_time` | Timestamp da mensagem. Usado para ordenar o histórico enviado ao OpenRouter. |
 
 ## 5. Fluxo de Persistência e Recuperação
 
-1.  **Escrita (Write):** Quando o cliente envia um áudio, a Evolution API processa o recebimento e grava automaticamente o registro no PostgreSQL (graças à flag `SAVE_DATA_NEW_MESSAGE`).
-2.  **Notificação:** Simultaneamente, a Evolution API dispara o Webhook para o `sdr-bot`.
-3.  **Leitura (Read):** O `sdr-bot` recebe o webhook e executa uma chamada `GET /chat/findMessages/{remoteJid}` para a Evolution API.
-4.  **Consulta:** A Evolution API consulta o PostgreSQL, recupera as últimas mensagens (ex: últimas 10) e retorna o JSON para o `sdr-bot`.
-5.  **Contexto:** O `sdr-bot` injeta esse histórico no prompt do Gemini.
+O bot faz uso de um arquivo JSON para manter o histórico de conversas localmente, complementando o armazenamento na Evolution API.
