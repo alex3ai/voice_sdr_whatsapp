@@ -13,7 +13,7 @@
 - **Comunicação WhatsApp:** Evolution API (V2)
 - **Containerização:** Docker & Docker Compose
 - **IA - Transcrição (Audio-to-Text):** Groq Cloud (usando o modelo Whisper-large-v3)
-- **IA - Raciocínio (Text-to-Text):** OpenRouter (atuando como gateway para LLMs como o GLM-4.5 ou DeepSeek)
+- **IA - Raciocínio (Text-to-Text):** Groq Cloud (modelo: llama-3.3-70b-versatile)
 - **IA - Síntese de Voz (Text-to-Speech):** Azure Cognitive Services (via API REST)
 - **Libs de HTTP Assíncrono:** `httpx` (cliente principal) e `aiohttp` (para o serviço de voz)
 - **Configuração:** Pydantic (para carregar e validar variáveis de ambiente)
@@ -35,5 +35,5 @@
 - ✅ **Erro 2176 (Azure SDK):** Substituído SDK pesado por API REST via `aiohttp`. Resolvido conflito de dependências Linux.
 - ✅ **Loop de Conexão:** Implementado `asyncio.Lock` no endpoint `/qrcode`.
 - ✅ **Voz Robótica:** Configurado SSML para voz `pt-BR-AntonioNeural` via Azure.
-- ✅ **Substituição do Gemini:** Migrado de Gemini para OpenRouter com modelo GLM-4.5 ou DeepSeek para maior flexibilidade.
+- ✅ **Substituição do Gemini:** Migrado de Gemini para Groq com modelo llama-3.3-70b-versatile para maior flexibilidade.
 - ✅ **Melhoria no STT:** Adotado Groq Whisper para transcrição mais rápida e precisa.

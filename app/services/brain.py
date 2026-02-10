@@ -1,7 +1,7 @@
 """
 Serviço de Inteligência Artificial Híbrido.
 Ouvido: Groq (Whisper)
-Cérebro: OpenRouter (DeepSeek/Llama)
+Cérebro: Groq (llama-3.3-70b-versatile)
 Memória: Persistência em Arquivo JSON (Resistente a reinicializações do Docker)
 """
 import pathlib

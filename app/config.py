@@ -4,7 +4,7 @@ from typing import Literal
 
 class Settings(BaseSettings):
     """
-    Configurações Universais (OpenRouter/GLM-4 + Evolution API v2).
+    Configurações Universais (Groq LLM + Evolution API v2).
     """
     
     # Controle de Ambiente
@@ -18,12 +18,12 @@ class Settings(BaseSettings):
     evolution_api_key: str = Field(..., description="Global API Key para autenticação")
     evolution_instance_name: str = Field(..., description="Nome da instância na Evolution")
     
-    # LLM (OpenRouter / OpenAI Compatible)
-    # URL Base da OpenRouter
-    openai_base_url: str = Field(default="https://openrouter.ai/api/v1", description="URL Base do LLM")
-    openai_api_key: str = Field(..., description="API Key da OpenRouter")
-    # Modelo GLM-4.5 Air (Gratuito) via OpenRouter
-    openai_model: str = Field(default="z-ai/glm-4.5-air:free", description="Modelo a ser utilizado")
+    # LLM (Groq Compatible API)
+    # URL Base da Groq
+    openai_base_url: str = Field(default="https://api.groq.com/openai/v1/", description="URL Base do LLM")
+    openai_api_key: str = Field(..., description="API Key da Groq")
+    # Modelo llama-3.3-70b-versatile (Gratuito) via Groq
+    openai_model: str = Field(default="llama-3.3-70b-versatile", description="Modelo a ser utilizado")
     
     # Voice (TTS)
     # Edge-TTS é o primário, gTTS entra como fallback se falhar
