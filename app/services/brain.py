@@ -10,6 +10,7 @@ import json
 from openai import AsyncOpenAI
 from app.config import settings
 from app.utils.logger import setup_logger
+from app.utils.retry_handler import retry_with_backoff, get_retryable_exceptions
 
 logger = setup_logger(__name__)
 
@@ -99,6 +100,13 @@ class BrainService:
         # Persiste a alteração no arquivo
         self._save_memory()
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        backoff_factor=2.0,
+        exceptions=get_retryable_exceptions() + (Exception,)
+    )
     async def transcribe_audio(self, audio_path: str) -> str:
         """
         Transcreve o áudio usando Groq Whisper.
@@ -129,6 +137,13 @@ class BrainService:
             logger.error(f"❌ Erro na transcrição (Groq): {e}")
             return ""
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        backoff_factor=2.0,
+        exceptions=get_retryable_exceptions() + (Exception,)
+    )
     async def process_audio_and_respond(self, audio_path: str | pathlib.Path, remote_jid: str) -> str:
         """
         Pipeline: Ouvir -> Carregar Contexto -> Pensar -> Salvar Contexto
@@ -172,6 +187,13 @@ class BrainService:
             logger.error(f"❌ Erro no cérebro: {e}", exc_info=True)
             return "Oi! Tive um problema técnico. Pode repetir o áudio?"
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        backoff_factor=2.0,
+        exceptions=get_retryable_exceptions() + (Exception,)
+    )
     async def process_text_and_respond(self, user_text: str, remote_jid: str) -> str:
         """
         Processa mensagem de texto diretamente, sem necessidade de transcrição.

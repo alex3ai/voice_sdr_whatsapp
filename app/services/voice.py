@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 from app.config import settings
 from app.utils.files import get_temp_filename, safe_remove
 from app.utils.logger import setup_logger
+from app.utils.retry_handler import retry_with_backoff, get_retryable_exceptions
 
 logger = setup_logger(__name__)
 
@@ -34,6 +35,13 @@ class VoiceService:
         # Isso garante que o áudio seja enviado como "Nota de Voz" e não arquivo de música
         self.output_format = "ogg-48khz-16bit-mono-opus"
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        backoff_factor=2.0,
+        exceptions=get_retryable_exceptions()
+    )
     async def generate_audio(self, text: str) -> Optional[Path]:
         """
         Gera áudio enviando SSML para a API REST da Azure.

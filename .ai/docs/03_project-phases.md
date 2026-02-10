@@ -1,3 +1,5 @@
+```
+03_project-phases.md
 # Plano de Execução do Projeto: Voice SDR WhatsApp
 
 Este documento detalha as fases e tarefas planejadas para a evolução do projeto, com base nas `User Stories` e no estado atual da aplicação.
@@ -32,7 +34,7 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 **Objetivo:** Aumentar a resiliência do sistema com mecanismos avançados de tratamento de falhas.
 
--   [ ] **3.1.** Implementar uma função *wrapper* ou decorador com lógica de *retries* e *exponential backoff* para todas as chamadas de API externas nos serviços.
+-   [x] **3.1.** Implementar uma função *wrapper* ou decorador com lógica de *retries* e *exponential backoff* para todas as chamadas de API externas nos serviços. Documentação: [implementation_plan_3.1.md](./implementation_plan_3.1.md)
 -   [ ] **3.2.** Criar um módulo de notificação (`app/services/notification.py`) com uma interface genérica e uma implementação inicial (ex: log para um arquivo crítico ou print no console).
 -   [ ] **3.3.** Integrar o serviço de notificação para que erros críticos no pipeline disparem um alerta.
 
@@ -55,4 +57,4 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 **Objetivo:** Capacitar o bot a identificar a intenção de agendamento e coordenar horários com os clientes.
 
 -   [ ] **5.1** (MVP): O bot apenas envia um link do Calendly/Google Agenda para o cliente agendar sozinho. (Fácil, resolve 80% do problema).
--   [ ] **5.2** (Full): Integração via API para agendar diretamente pelo chat (Difícil, fazer só se o 5.1 não converter bem).
+-   [ ] **5.2** (Full): Integração via API para agendar diretamente pelo chat (Difícil, fazer só se o 5.1 não converter bem).```

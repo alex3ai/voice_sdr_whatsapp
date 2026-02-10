@@ -12,6 +12,7 @@ from app.config import settings
 from app.utils.exceptions import EvolutionApiException
 from app.utils.files import get_temp_filename
 from app.utils.logger import setup_logger
+from app.utils.retry_handler import retry_with_backoff, get_retryable_exceptions
 
 logger = setup_logger(__name__)
 
@@ -26,6 +27,13 @@ class EvolutionService:
         self.timeout = httpx.Timeout(settings.download_timeout, connect=10.0)
         self._instance_lock = asyncio.Lock()
 
+    @retry_with_backoff(
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        backoff_factor=2.0,
+        exceptions=get_retryable_exceptions() + (EvolutionApiException,)
+    )
     async def _request(
         self,
         method: str,
