@@ -1,5 +1,7 @@
 ```
 03_project-phases.md
+```
+03_project-phases.md
 # Plano de Execução do Projeto: Voice SDR WhatsApp
 
 Este documento detalha as fases e tarefas planejadas para a evolução do projeto, com base nas `User Stories` e no estado atual da aplicação.
@@ -36,7 +38,7 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 -   [x] **3.1.** Implementar uma função *wrapper* ou decorador com lógica de *retries* e *exponential backoff* para todas as chamadas de API externas nos serviços. Documentação: [implementation_plan_3.1.md](./implementation_plan_3.1.md)
 -   [x] **3.2.** Criar um módulo de notificação (`app/services/notification.py`) com uma interface genérica e uma implementação inicial (ex: log para um arquivo crítico ou print no console).
--   [x] **3.3.** Integrar o serviço de notificação para que erros críticos no pipeline disparem um alerta.
+-   [x] **3.3.** Integrar o serviço de notificação para que erros críticos no pipeline dispirem um alerta.
 
 ---
 
@@ -44,11 +46,11 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 **Objetivo:** Desenvolver uma interface web para monitoramento de conversas e análise de performance do bot.
 
--   [ ] **4.1.** criar consultas SQL (ou Views) no banco existente para extrair as métricas.
--   [ ] **4.2.** Criar uma nova aplicação web (ex: com FastAPI e templates Jinja2, ou um framework frontend como React) para o dashboard.
--   [ ] **4.3.** Desenvolver os endpoints de API para alimentar o dashboard com as métricas (nº de conversas, tempo médio de resposta, etc.).
--   [ ] **4.4.** Implementar a interface do usuário (UI) para exibir as métricas e permitir a visualização do histórico de conversas.
--   [ ] **4.5.** Adicionar filtros por período de data na API e na UI do dashboard.
+-   [x] **4.1.** criar consultas SQL (ou Views) no banco existente para extrair as métricas. Documentação: [implementation_plan_4.1.md](./implementation_plan_4.1.md) e [create_metrics_views.sql](../../create_metrics_views.sql)
+-   [x] **4.2.** Criar uma nova aplicação web (ex: com FastAPI e templates Jinja2, ou um framework frontend como React) para o dashboard. Documentação: [05_metrics-dashboard.md](./05_metrics-dashboard.md)
+-   [x] **4.3.** Desenvolver os endpoints de API para alimentar o dashboard com as métricas (nº de conversas, tempo médio de resposta, etc.).
+-   [x] **4.4.** Implementar a interface do usuário (UI) para exibir as métricas e permitir a visualização do histórico de conversas.
+-   [x] **4.5.** Adicionar filtros por período de data na API e na UI do dashboard.
 
 ---
 

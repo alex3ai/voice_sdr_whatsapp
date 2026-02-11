@@ -39,6 +39,118 @@ Com base em .ai/docs/00_project-description.md e .ai/docs/01_user-stories.md, es
 
 ## ⚙️ Especificação Técnica
 
+## 📚 Visões (Views) do Sistema
+Também conhecidas como "materalized views" ou visões não armazenadas, estas estruturas são criadas a partir de consultas SQL sobre as tabelas base e oferecem abstrações úteis para análise e monitoramento.
+
+### Tabelas da Evolution API
+
+#### messages (Tabela Original)
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| id | text | ID da mensagem |
+| remote_jid | text | ID do destinatário (cliente) |
+| from_me | boolean | TRUE para mensagens enviadas pelo bot, FALSE para recebidas |
+| message_type | text | Tipo da mensagem (audioMessage, conversation, etc.) |
+| created_at | timestamp | Data/hora da criação da mensagem |
+| content | text | Conteúdo textual da mensagem |
+
+### Visões Analíticas
+
+#### conversation_metrics
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| data | date | Data da conversa |
+| numero_de_conversas | bigint | Número de conversas distintas |
+| total_mensagens | bigint | Total de mensagens na data |
+
+#### active_conversations
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| remote_jid | text | ID do cliente |
+| total_mensagens | bigint | Total de mensagens |
+| ultima_mensagem | timestamp | Data da última mensagem |
+| primeira_mensagem | timestamp | Data da primeira mensagem |
+
+#### message_type_distribution
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| tipo_mensagem | text | Tipo categorizado da mensagem |
+| quantidade | bigint | Quantidade de mensagens desse tipo |
+
+### Visões de Performance
+
+#### bot_response_rate
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| mensagens_enviadas_pelo_bot | bigint | Total de mensagens enviadas pelo bot |
+| mensagens_recebidas_do_cliente | bigint | Total de mensagens recebidas do cliente |
+| total_mensagens | bigint | Total geral de mensagens |
+| percentual_respostas | numeric | Percentual de respostas do bot |
+
+#### daily_performance_metrics
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| data | date | Data da medição |
+| total_mensagens | bigint | Total de mensagens |
+| mensagens_enviadas | bigint | Mensagens enviadas pelo bot |
+| mensagens_recebidas | bigint | Mensagens recebidas do cliente |
+| tempo_medio_resposta_segundos | numeric | Tempo médio de resposta |
+
+### Visões de Engajamento
+
+#### conversations_by_client
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| remote_jid | text | ID do cliente |
+| dias_comunicacao | bigint | Dias distintos de comunicação |
+| total_mensagens | bigint | Total de mensagens trocadas |
+| primeira_mensagem | timestamp | Data da primeira mensagem |
+| ultima_mensagem | timestamp | Data da última mensagem |
+| mensagens_bot | bigint | Mensagens enviadas pelo bot |
+| mensagens_cliente | bigint | Mensagens recebidas do cliente |
+
+### Visões Agregadas
+
+#### comprehensive_conversation_metrics
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| data | date | Data da medição |
+| usuarios_unicos | bigint | Número de usuários únicos |
+| total_mensagens | bigint | Total de mensagens |
+| mensagens_enviadas | bigint | Mensagens enviadas pelo bot |
+| mensagens_recebidas | bigint | Mensagens recebidas do cliente |
+| taxa_resposta_percentual | numeric | Taxa de resposta do bot |
+| usuarios_ativos_24h | bigint | Usuários ativos nas últimas 24h |
+
+#### system_wide_metrics
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| total_usuarios_atendidos | bigint | Total de usuários distintos atendidos |
+| total_mensagens_processadas | bigint | Total de mensagens processadas |
+| mensagens_enviadas_pelo_bot | bigint | Mensagens enviadas pelo bot |
+| mensagens_recebidas_dos_clientes | bigint | Mensagens recebidas dos clientes |
+| dias_atividade | bigint | Dias com atividade |
+| primeira_interacao | timestamp | Data da primeira interação |
+| ultima_interacao | timestamp | Data da última interação |
+| proporcao_respostas | numeric | Proporção de respostas do bot |
+
+### Visões de Padrões Temporais
+
+#### hourly_activity
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| hora_do_dia | integer | Hora do dia (0-23) |
+| total_mensagens | bigint | Total de mensagens na hora |
+| mensagens_recebidas | bigint | Mensagens recebidas na hora |
+| mensagens_enviadas | bigint | Mensagens enviadas na hora |
+
+#### weekly_activity
+| Campo | Tipo | Observações |
+|-------|------|-------------|
+| dia_da_semana | integer | Dia da semana (0-6) |
+| nome_dia | text | Nome do dia da semana |
+| total_mensagens | bigint | Total de mensagens no dia |
+
 ### Conversas
 | Campo | Tipo | Restrições | Observações |
 |-------|------|------------|-------------|
@@ -86,8 +198,8 @@ Com base em .ai/docs/00_project-description.md e .ai/docs/01_user-stories.md, es
 
 ## ⚠️ Edge Cases Documentados
 
-- [ ] Cenário: Cliente deletado com agendamentos ativos → Ação: soft delete + manter histórico
-- [ ] Cenário: Dois agendamentos no mesmo horário/recurso → Ação: rejeitar com erro 409
-- [ ] Cenário: Dados ausentes em integração externa → Ação: fallback para valores padrão
-- [ ] Cenário: Mensagem recebida com tipo não suportado → Ação: registrar erro e notificar equipe
-- [ ] Cenário: Cliente tenta iniciar conversa com bot bloqueado → Ação: não responder e registrar tentativa
+- [x] Cenário: Cliente deletado com agendamentos ativos → Ação: soft delete + manter histórico
+- [x] Cenário: Dois agendamentos no mesmo horário/recurso → Ação: rejeitar com erro 409
+- [x] Cenário: Dados ausentes em integração externa → Ação: fallback para valores padrão
+- [x] Cenário: Mensagem recebida com tipo não suportado → Ação: registrar erro e notificar equipe
+- [x] Cenário: Cliente tenta iniciar conversa com bot bloqueado → Ação: não responder e registrar tentativa

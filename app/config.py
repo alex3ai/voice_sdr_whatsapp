@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # Tipo de resposta (áudio ou texto)
     response_type: Literal["audio", "text"] = Field(default="audio", description="Tipo de resposta enviada ao usuário")
     
+    # Runtime Environment
+    runtime_env: Literal["local", "docker", "production"] = Field(default="local", description="Ambiente de execução para ajustar configurações dinâmicas")
+
+    # Database Connection (for metrics)
+    database_host: str = Field(default="localhost", description="Host do banco de dados PostgreSQL (use 'host.docker.internal' se estiver rodando em Docker)")
+    database_port: int = Field(default=5432, description="Porta do banco de dados PostgreSQL")
+    database_user: str = Field(default="evolution", description="Usuário do banco de dados")
+    database_password: str = Field(default="evolution", description="Senha do banco de dados")
+    database_name: str = Field(default="evolution", description="Nome do banco de dados")
+    
     # Limites
     download_timeout: int = 60
     max_audio_size_mb: int = 16
@@ -58,6 +68,11 @@ class Settings(BaseSettings):
             "apikey": self.evolution_api_key,
             "Content-Type": "application/json"
         }
+    
+    @property
+    def database_connection_uri(self) -> str:
+        """Retorna a URI de conexão com o banco de dados"""
+        return f"postgresql://{self.database_user}:{self.database_password}@{self.database_host}:{self.database_port}/{self.database_name}"
 
     # --- CORREÇÃO DE SEGURANÇA PARA WINDOWS ---
     @validator("*", pre=True)

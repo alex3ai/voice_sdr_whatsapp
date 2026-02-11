@@ -15,6 +15,7 @@ from app.config import settings
 from app.services.evolution import evolution_service
 from app.services.brain import brain_service
 from app.services.voice import voice_service
+from app.services.metrics import metrics_service  # Importar o novo serviço de métricas
 from app.services.notification import get_notification_service
 from app.utils.files import safe_remove, cleanup_temp_files
 from app.utils.logger import setup_logger
@@ -369,3 +370,121 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, 
     finally:
         safe_remove(input_path)
         safe_remove(output_path)
+
+
+# ==========================================
+# NOVOS ENDPOINTS PARA MÉTRICAS DO DASHBOARD
+# ==========================================
+
+@app.get("/metrics/daily_conversations")
+async def get_daily_conversations(start_date: str = None, end_date: str = None):
+    """
+    Endpoint para obter métricas diárias de conversas
+    """
+    from datetime import datetime
+    
+    start_dt = datetime.fromisoformat(start_date) if start_date else None
+    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    
+    data = await metrics_service.get_daily_conversation_metrics(start_dt, end_dt)
+    return {"data": data}
+
+
+@app.get("/metrics/active_conversations")
+async def get_active_conversations():
+    """
+    Endpoint para obter conversas ativas nas últimas 24h
+    """
+    data = await metrics_service.get_active_conversations()
+    return {"data": data}
+
+
+@app.get("/metrics/message_types")
+async def get_message_types():
+    """
+    Endpoint para obter distribuição de tipos de mensagens
+    """
+    data = await metrics_service.get_message_type_distribution()
+    return {"data": data}
+
+
+@app.get("/metrics/response_rate")
+async def get_response_rate():
+    """
+    Endpoint para obter taxa de resposta do bot
+    """
+    data = await metrics_service.get_bot_response_rate()
+    return {"data": data}
+
+
+@app.get("/metrics/performance")
+async def get_performance_metrics(start_date: str = None, end_date: str = None):
+    """
+    Endpoint para obter métricas de performance
+    """
+    from datetime import datetime
+    
+    start_dt = datetime.fromisoformat(start_date) if start_date else None
+    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    
+    data = await metrics_service.get_daily_performance_metrics(start_dt, end_dt)
+    return {"data": data}
+
+
+@app.get("/metrics/conversations_by_client")
+async def get_conversations_by_client(limit: int = 10):
+    """
+    Endpoint para obter conversas agrupadas por cliente
+    """
+    data = await metrics_service.get_conversations_by_client(limit)
+    return {"data": data}
+
+
+@app.get("/metrics/system_wide")
+async def get_system_wide_metrics():
+    """
+    Endpoint para obter métricas amplas do sistema
+    """
+    data = await metrics_service.get_system_wide_metrics()
+    return {"data": data}
+
+
+@app.get("/metrics/hourly_activity")
+async def get_hourly_activity():
+    """
+    Endpoint para obter atividade por hora do dia
+    """
+    data = await metrics_service.get_hourly_activity()
+    return {"data": data}
+
+
+@app.get("/metrics/weekly_activity")
+async def get_weekly_activity():
+    """
+    Endpoint para obter atividade por dia da semana
+    """
+    data = await metrics_service.get_weekly_activity()
+    return {"data": data}
+
+
+@app.get("/metrics/dashboard_summary")
+async def get_dashboard_summary():
+    """
+    Endpoint para obter um sumário completo para o dashboard
+    """
+    system_metrics = await metrics_service.get_system_wide_metrics()
+    recent_conversations = await metrics_service.get_daily_conversation_metrics()
+    active_conversations = await metrics_service.get_active_conversations()
+    message_types = await metrics_service.get_message_type_distribution()
+    response_rate = await metrics_service.get_bot_response_rate()
+    
+    return {
+        "system_metrics": system_metrics,
+        "recent_conversations": recent_conversations[:7],  # Últimos 7 dias
+        "active_conversations_count": len(active_conversations),
+        "top_active_conversation": active_conversations[0] if active_conversations else None,
+        "message_types": message_types,
+        "response_rate": response_rate,
+        "timestamp": time.time()
+    }
+

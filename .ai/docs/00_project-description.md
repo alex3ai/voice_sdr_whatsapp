@@ -49,6 +49,7 @@ A arquitetura é baseada em microsserviços desacoplados que se comunicam atrav�
         -   `evolution.py`: Comunicação com a Evolution API.
         -   `brain.py`: Interação com a Groq.
         -   `voice.py`: Geração de áudio.
+        -   `metrics.py`: Serviço para extração e análise de métricas do banco de dados da Evolution API.
     -   `models/`: Modelos de dados para requisições e respostas.
         -   `webhook.py`: Estrutura dos dados recebidos via webhook da Evolution API.
     -   `utils/`: Funções auxiliares (logs, manipulação de arquivos, tratamento de exceções).
@@ -56,13 +57,33 @@ A arquitetura é baseada em microsserviços desacoplados que se comunicam atrav�
 
 ---
 
-## 4. Estado Atual do Desenvolvimento
+## 4. Funcionalidades de Métricas e Dashboard
 
-O projeto está em um estágio funcional e bem estruturado.
+O sistema agora inclui uma abrangente suite de métricas para monitoramento e análise de desempenho do bot, implementada através de Views SQL e um serviço dedicado de métricas. Estas funcionalidades permitem acompanhar o desempenho do bot, volume de conversas, e eficácia das interações com os usuários.
+
+### Métricas Disponíveis:
+-   **Métricas de Conversas Diárias:** Quantidade de conversas e mensagens por dia
+-   **Conversas Ativas:** Monitoramento de conversas nas últimas 24 horas
+-   **Distribuição de Tipos de Mensagem:** Percentuais de mensagens de áudio, texto, imagem, etc.
+-   **Taxa de Resposta do Bot:** Percentual de mensagens respondidas pelo bot em relação às recebidas
+-   **Métricas Ampla do Sistema:** KPIs gerais de utilização e performance
+-   **Atividade por Hora e Dia da Semana:** Padrões de uso ao longo do tempo
+
+### Componentes de Métricas:
+-   **Views SQL:** Implementadas no banco de dados PostgreSQL para cálculo eficiente das métricas
+-   **Serviço de Métricas ([metrics.py](file:///c%3A/Users/alex_/Desktop/PE33/Projetos%20PE33/Projeto%2020%20-%20voice_sdr_whatsapp/voice_sdr_whatsapp/app/services/metrics.py)):** Camada de acesso e processamento das métricas
+-   **Endpoints de API:** Disponibilizam dados para o dashboard de monitoramento
+
+---
+
+## 5. Estado Atual do Desenvolvimento
+
+O projeto está em um estágio funcional e bem estruturado com adição das funcionalidades de métricas e dashboard de monitoramento.
 
 -   A infraestrutura com Docker Compose está completa e funcional, permitindo que todo o ecossistema seja iniciado com um único comando.
 -   O pipeline principal de processamento de áudio (receber, entender, responder) está implementado e operacional.
 -   Possui uma interface web simples para facilitar a conexão com o WhatsApp através da leitura de um QR Code.
 -   Endpoints de monitoramento (`/health`, `/status`) e um dashboard básico (`/`) estão implementados.
+-   A suite de métricas para acompanhamento de desempenho do bot foi adicionada, permitindo análise de eficácia e volume de interações.
 -   O código está organizado, comentado e utiliza boas práticas como o uso de tarefas em background e gerenciamento centralizado de configurações.
 -   O sistema está pronto para testes em um ambiente de desenvolvimento e potencialmente para implantação em produção com as devidas configurações de segurança e escalabilidade.
