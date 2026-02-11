@@ -15,11 +15,13 @@ from app.config import settings
 from app.services.evolution import evolution_service
 from app.services.brain import brain_service
 from app.services.voice import voice_service
+from app.services.notification import get_notification_service
 from app.utils.files import safe_remove, cleanup_temp_files
 from app.utils.logger import setup_logger
 
 # Configura Logger
 logger = setup_logger(__name__)
+notification_service = get_notification_service()
 
 # --- Middleware de Logs ---
 class LogMiddleware(BaseHTTPMiddleware):
@@ -278,7 +280,11 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
         return {"status": "processing"}
 
     except Exception as e:
-        logger.error(f"Erro webhook: {e}", exc_info=True)
+        logger.error(f"💥 Erro geral no webhook: {e}", exc_info=True)
+        notification_service.notify_error(
+            e,
+            {"event": data.get("event"), "service": "webhook_handler"}
+        )
         return {"status": "error_handled"}
 
 
@@ -355,6 +361,10 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, 
 
     except Exception as e:
         logger.error(f"💥 [Pipeline] Erro crítico: {e}", exc_info=True)
+        notification_service.notify_error(
+            e,
+            {"phone_jid": phone_jid, "message_id": message_id, "pipeline_stage": "processing"}
+        )
         metrics["errors"] += 1
     finally:
         safe_remove(input_path)

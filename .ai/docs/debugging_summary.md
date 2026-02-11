@@ -19,15 +19,13 @@
 - **Configuração:** Pydantic (para carregar e validar variáveis de ambiente)
 
 ## 2. Mapa de Arquivos (Resumo Lógico)
-- `app/main.py`: **Orquestrador Central.** Ponto de entrada da API FastAPI. Gerencia as rotas HTTP (`/webhook`, `/qrcode`, etc.), o estado da conexão e coordena o pipeline de resposta (download -> cérebro -> voz -> envio).
-- `app/config.py`: **Guardião das Configurações.** Carrega, valida e centraliza todas as variáveis de ambiente (chaves de API, URLs, etc.) usando Pydantic, garantindo que a aplicação inicie apenas com as configurações corretas.
-- `app/services/evolution.py`: **Ponte com o WhatsApp.** Encapsula toda a lógica de comunicação com a Evolution API. É responsável por gerenciar a instância (criar, conectar, deletar), enviar mensagens (texto e áudio) e fazer o download de mídias recebidas.
+- `app/main.py`: **Orquestrador Central.** Ponto de entrada da API FastAPI. Gerencia as rotas HTTP (`/webhook`, `/qrcode`, etc.), o estado da conexão e coordena o pipeline de resposta (download -> cérebro -> voz -> envio). Agora inclui serviço de notificação para erros críticos.
+- `app/config.py`: **Guardião das Configurações.** Carrega, valida e centraliza todas as variáveis de ambiente (chaves de API, URLs, etc.) usando Pydantic, garantindo que a aplicação inicie apenas com as configurações corretas. Inclui configurações para o serviço de notificação.
+- `app/services/evolution.py`: **Ponte com o WhatsApp.** Encapsula toda a lógica de comunicação com a Evolution API. É responsável por gerenciar a instância (criar, conectar, deletar), enviar mensagens (texto e áudio) e fazer o download de mídias recebidas. Agora inclui notificação de erros críticos.
 - `app/services/brain.py`: **O Cérebro da IA.** Orquestra a inteligência do bot. Utiliza o **"Ouvido"** (Groq) para transcrever o áudio do usuário e o **"Cérebro"** (OpenRouter) para interpretar o texto e formular uma resposta coesa, seguindo o prompt de sistema.
-- `app/services/voice.py`: **A Voz do Bot.** Responsável por converter a resposta em texto do Cérebro em um áudio com som natural. Comunica-se com a API REST da Azure para gerar a nota de voz no formato OGG/Opus, ideal para o WhatsApp.
+- `app/services/voice.py`: **A Voz do Bot.** Responsável por converter a resposta em texto do Cérebro em um áudio com som natural. Comunica-se com a API REST da Azure para gerar a nota de voz no formato OGG/Opus, ideal para o WhatsApp. Agora inclui notificação de falhas críticas e múltiplas estratégias de fallback (SDK Azure, API REST, Edge TTS).
+- `app/services/notification.py`: **Serviço de Notificação.** Novo componente que fornece uma interface genérica para envio de notificações de erro crítico, com implementações para console e arquivo.
 - `app/utils/logger.py`: **O Escriba.** Configura um sistema de logging robusto para registrar eventos da aplicação, tanto no console quanto em arquivos, facilitando a depuração.
-- `app/utils/files.py`: **O Zelador.** Gerencia o ciclo de vida de arquivos temporários (áudios baixados e gerados), garantindo sua criação em um diretório seguro e a limpeza automática para não sobrecarregar o sistema.
-- `app/utils/exceptions.py`: **O Tratador de Erros.** Define classes de exceção personalizadas para cada serviço, permitindo que o código capture e lide com falhas de forma mais específica e organizada.
-- `app/models/webhook.py`: **Modelo de Dados.** Define a estrutura dos dados recebidos via webhook da Evolution API, facilitando o tratamento das mensagens recebidas.
 - `docker-compose.yml`: **O Maestro do Ambiente.** Define e orquestra os contêineres Docker necessários para rodar a aplicação e seus serviços dependentes (se houver) em um ambiente isolado e consistente.
 - `dockerfile`: **A Receita do Contêiner.** Contém as instruções passo a passo para construir a imagem Docker da aplicação, instalando dependências e configurando o ambiente de execução.
 
@@ -37,3 +35,14 @@
 - ✅ **Voz Robótica:** Configurado SSML para voz `pt-BR-AntonioNeural` via Azure.
 - ✅ **Substituição do Gemini:** Migrado de Gemini para Groq com modelo llama-3.3-70b-versatile para maior flexibilidade.
 - ✅ **Melhoria no STT:** Adotado Groq Whisper para transcrição mais rápida e precisa.
+- ✅ **Notificações de Erro Crítico:** Implementado serviço de notificação genérico com interfaces para console e arquivo, integrado com os principais componentes do sistema.
+- ✅ **Erro de Validação Pydantic:** Resolvido conflito entre campos Pydantic e propriedades personalizadas na classe Settings.
+- ✅ **Importação Incorreta:** Corrigido import de função inexistente 'Logger' para função correta 'setup_logger'.
+- ✅ **Configurações Ausentes:** Adicionados campos obrigatórios para Azure TTS que estavam faltando na classe Settings.
+- ✅ **Atributo Obsoleto:** Removido atributo 'version' obsoleto do docker-compose.yml.
+- ✅ **Método Ausente:** Implementado método 'connect_to_existing_instance' na classe EvolutionService para lidar com instâncias já existentes.
+- ✅ **Falha na Autenticação Azure TTS:** Implementado método de obtenção de token de autorização via endpoint `/sts/v1.0/issueToken` em vez de usar diretamente a chave de subscrição no cabeçalho da requisição.
+- ✅ **Erro 400 na API REST do Azure:** Simplificado o SSML para evitar problemas de formatação e garantir compatibilidade com a API.
+- ✅ **Problema de Volume Baixo:** Ajustado controle de volume no SSML para aumentar a audibilidade do áudio gerado.
+- ✅ **Formato de Áudio Incompatível:** Alterado formato de saída para `ogg-24khz-16bit-mono-opus` para melhor compatibilidade com o WhatsApp.
+- ✅ **Múltiplos Mecanismos de Fallback:** Implementado sistema robusto com Azure SDK, API REST e Edge TTS como estratégias de contingência para garantir sempre uma resposta de áudio.

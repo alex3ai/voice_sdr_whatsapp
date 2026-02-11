@@ -29,12 +29,21 @@ class Settings(BaseSettings):
     # Edge-TTS é o primário, gTTS entra como fallback se falhar
     edge_tts_voice: str = Field(default="pt-BR-AntonioNeural")
     
+    # Azure TTS (opcional - usado como fallback após Edge-TTS)
+    azure_tts_subscription_key: str = Field(default="", description="Chave de assinatura do Azure TTS")
+    azure_tts_region: str = Field(default="brazilsouth", description="Região do Azure TTS")
+    azure_tts_voice_name: str = Field(default="pt-BR-AntonioNeural", description="Nome da voz do Azure TTS")
+    
     # Tipo de resposta (áudio ou texto)
     response_type: Literal["audio", "text"] = Field(default="audio", description="Tipo de resposta enviada ao usuário")
     
     # Limites
     download_timeout: int = 60
     max_audio_size_mb: int = 16
+
+    # Configurações de notificação
+    notification_type: Literal["console", "file"] = Field(default="console", description="Tipo de notificação para erros críticos")
+    notification_log_file_path: str = Field(default="notifications.log", description="Caminho do arquivo de log de notificação")
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -49,7 +58,7 @@ class Settings(BaseSettings):
             "apikey": self.evolution_api_key,
             "Content-Type": "application/json"
         }
-    
+
     # --- CORREÇÃO DE SEGURANÇA PARA WINDOWS ---
     @validator("*", pre=True)
     def strip_whitespace(cls, v):

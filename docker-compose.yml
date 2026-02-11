@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ========================================
   # 1. Banco de Dados (Postgres)
@@ -115,6 +113,15 @@ services:
     environment:
       - EVOLUTION_API_URL=http://evolution-api:8080
       - EVOLUTION_API_KEY=123456
+      # Variáveis do Azure TTS
+      - AZURE_TTS_SUBSCRIPTION_KEY=${AZURE_TTS_SUBSCRIPTION_KEY}
+      - AZURE_TTS_REGION=${AZURE_TTS_REGION}
+      - AZURE_TTS_VOICE_NAME=${AZURE_TTS_VOICE_NAME}
+      # Outras configurações
+      - RESPONSE_TYPE=${RESPONSE_TYPE}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
     volumes:
       # --- PERSISTÊNCIA DE MEMÓRIA ---
       # Mapeia o arquivo do host para o container.

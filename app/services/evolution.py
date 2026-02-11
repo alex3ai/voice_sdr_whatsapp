@@ -13,14 +13,17 @@ from app.utils.exceptions import EvolutionApiException
 from app.utils.files import get_temp_filename
 from app.utils.logger import setup_logger
 from app.utils.retry_handler import retry_with_backoff, get_retryable_exceptions
+from .notification import get_notification_service
 
 logger = setup_logger(__name__)
+notification_service = get_notification_service()
 
 
 class EvolutionService:
     """Gerenciador de comunicação com a Evolution API"""
 
     def __init__(self):
+        self.notification_service = get_notification_service()
         self.base_url = settings.evolution_api_url
         self.instance_name = settings.evolution_instance_name
         self.headers = settings.evolution_headers
@@ -79,6 +82,10 @@ class EvolutionService:
         except httpx.HTTPStatusError as e:
             # Se for 403 (Instance already exists), lançamos erro específico
             if e.response.status_code == 403:
+                self.notification_service.notify_error(
+                    EvolutionApiException("InstanceConflict", original_exception=e),
+                    {"endpoint": endpoint, "status_code": e.response.status_code}
+                )
                 raise EvolutionApiException("InstanceConflict", original_exception=e)
 
             err_msg = f"{log_error}: API Status {e.response.status_code}" if log_error else f"Erro API {e.response.status_code}"
@@ -88,14 +95,26 @@ class EvolutionService:
                 err_msg += f" - {e.response.text}"
             
             logger.error(err_msg)
+            self.notification_service.notify_error(
+                EvolutionApiException(err_msg, original_exception=e),
+                {"endpoint": endpoint, "status_code": e.response.status_code}
+            )
             raise EvolutionApiException(err_msg, original_exception=e)
             
         except Exception as e:
             if isinstance(e, EvolutionApiException):
+                self.notification_service.notify_error(
+                    e,
+                    {"endpoint": endpoint, "method": method}
+                )
                 raise e
                 
             err_msg = f"{log_error}: Erro inesperado." if log_error else "Erro inesperado na API"
             logger.error(f"{err_msg} Detalhes: {e}")
+            self.notification_service.notify_error(
+                EvolutionApiException(err_msg, original_exception=e),
+                {"endpoint": endpoint, "method": method, "error_details": str(e)}
+            )
             raise EvolutionApiException(err_msg, original_exception=e)
 
     async def create_instance(self) -> Dict[str, Any]:
@@ -111,10 +130,18 @@ class EvolutionService:
             return await self._request("POST", "instance/create", json_data=payload)
         
         except EvolutionApiException as e:
-            if "InstanceConflict" in str(e):
-                logger.warning(f"⚠️ Instância já existe. Buscando QR Code...")
-                return await self.connect_instance()
-            return {"error": str(e)}
+            if e.args[0] == "InstanceConflict":
+                logger.info(f"⚠️ Instância '{self.instance_name}' já existe. Tentando conectar...")
+                
+                # Chama connect_to_existing_instance
+                return await self.connect_to_existing_instance()
+            else:
+                logger.error(f"❌ Erro ao criar instância: {e}")
+                self.notification_service.notify_error(
+                    e,
+                    {"instance_name": self.instance_name, "action": "create_instance"}
+                )
+                raise e
 
     async def connect_instance(self) -> Dict[str, Any]:
         """Busca o QR Code da instância."""
