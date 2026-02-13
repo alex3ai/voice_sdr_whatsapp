@@ -336,10 +336,23 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, 
             response_text = "Desculpe, tive um problema técnico momentâneo. Poderia repetir?"
             logger.warning("⚠️ [Pipeline] IA retornou vazio, usando resposta de fallback.")
 
+        # Verifica se a resposta é do serviço de agendamento
+        is_scheduling_response = response_text.startswith("[SCHEDULING_RESPONSE]")
+        if is_scheduling_response:
+            # Remove o prefixo especial
+            response_text = response_text[len("[SCHEDULING_RESPONSE]"):]
+
         logger.info(f"🤖 [Pipeline] IA: {response_text[:50]}...")
 
-        # 3. Decidir tipo de resposta baseado na configuração
-        if settings.response_type == "audio":
+        # 3. Decidir tipo de resposta baseado na configuração ou se é uma resposta de agendamento
+        # Se for resposta de agendamento, sempre enviar como texto
+        if is_scheduling_response or settings.response_type == "text":
+            # Envia resposta como texto
+            logger.info("💬 [Pipeline] Enviando texto de resposta...")
+            await evolution_service.send_text(phone_jid, response_text)
+            metrics["successful_responses"] += 1
+            logger.info("✅ [Pipeline] Sucesso!")
+        elif settings.response_type == "audio":
             # Gera áudio
             output_path = await voice_service.generate_audio(response_text)
 

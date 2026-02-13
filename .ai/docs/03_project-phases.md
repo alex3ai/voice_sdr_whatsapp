@@ -58,5 +58,5 @@ Este documento detalha as fases e tarefas planejadas para a evolução do projet
 
 **Objetivo:** Capacitar o bot a identificar a intenção de agendamento e coordenar horários com os clientes.
 
--   [ ] **5.1** (MVP): O bot apenas envia um link do Calendly/Google Agenda para o cliente agendar sozinho. (Fácil, resolve 80% do problema).
--   [ ] **5.2** (Full): Integração via API para agendar diretamente pelo chat (Difícil, fazer só se o 5.1 não converter bem).
+-   [x] **5.1** (MVP): O bot apenas envia um link do Calendly/Google Agenda para o cliente agendar sozinho. (Fácil, resolve 80% do problema). Documentação: [implementation_plan_5.1.md](./implementation_plan_5.1.md)
+-   [ ] **5.2** (Full): Integração via API para agendar diretamente pelo chat (Difícil, fazer só se o 5.1 não converter bem). Documentação: [implementation_plan_5.2.md](./implementation_plan_5.2.md)

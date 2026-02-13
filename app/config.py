@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     
     # Tipo de resposta (áudio ou texto)
     response_type: Literal["audio", "text"] = Field(default="audio", description="Tipo de resposta enviada ao usuário")
+
+    # Link de agendamento
+    calendar_link: str = Field(default="", description="Link para o sistema de agendamento (Calendly, Google Agenda, etc)")
     
     # Runtime Environment
     runtime_env: Literal["local", "docker", "production"] = Field(default="local", description="Ambiente de execução para ajustar configurações dinâmicas")

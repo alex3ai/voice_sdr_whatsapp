@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 from app.config import settings
 from app.utils.logger import setup_logger
 from app.utils.retry_handler import retry_with_backoff, get_retryable_exceptions
+from .appointment import AppointmentService
 
 logger = setup_logger(__name__)
 
@@ -60,6 +61,9 @@ class BrainService:
             self.client_ear = None
             logger.warning("⚠️ Chave GROQ_API_KEY não encontrada. Modo surdo.")
 
+        # 3. Configura o SERVIÇO DE AGENDAMENTO
+        self.appointment_service = AppointmentService()
+        
         # --- MEMÓRIA PERSISTENTE (JSON) ---
         # Carrega o histórico do arquivo ao iniciar
         self.history_file = pathlib.Path("chat_history.json")
@@ -155,16 +159,25 @@ class BrainService:
             if not user_text or len(user_text) < 2: 
                 return "Oi, não consegui te ouvir direito. Pode mandar de novo?"
 
-            # 2. Atualizar Memória com a fala do usuário
+            # 2. Verificar intenção de agendamento antes de processar pela IA
+            scheduling_response = await self.appointment_service.handle_appointment_request(type('obj', (object,), {'body': user_text})())
+            if scheduling_response:
+                # Adiciona resposta de agendamento ao histórico e retorna
+                self._update_memory(remote_jid, "assistant", scheduling_response)
+                logger.info(f"📅 Resposta de agendamento enviada: {scheduling_response}")
+                # Retorna a resposta com um prefixo especial para indicar que é uma resposta de agendamento
+                return f"[SCHEDULING_RESPONSE]{scheduling_response}"
+
+            # 3. Atualizar Memória com a fala do usuário
             self._update_memory(remote_jid, "user", user_text)
 
-            # 3. Construir Contexto para a IA
+            # 4. Construir Contexto para a IA
             messages_payload = [{"role": "system", "content": self.SYSTEM_PROMPT}]
             
             if remote_jid in self.sessions:
                 messages_payload.extend(self.sessions[remote_jid])
 
-            # 4. Pensar (Envia histórico completo)
+            # 5. Pensar (Envia histórico completo)
             response = await self.client_brain.chat.completions.create(
                 model=self.model_brain,
                 messages=messages_payload,
@@ -177,7 +190,7 @@ class BrainService:
             # Limpeza da resposta
             clean_reply = reply.strip().replace('"', '').replace("*", "")
             
-            # 5. Atualizar Memória com a resposta do Bot
+            # 6. Atualizar Memória com a resposta do Bot
             self._update_memory(remote_jid, "assistant", clean_reply)
             
             logger.info(f"🧠 Cérebro Respondeu: {clean_reply}")
@@ -202,16 +215,25 @@ class BrainService:
             if not user_text or len(user_text) < 2: 
                 return "Oi, não consegui entender direito. Pode repetir?"
 
-            # 1. Atualizar Memória com a mensagem do usuário
+            # 1. Verificar intenção de agendamento antes de processar pela IA
+            scheduling_response = await self.appointment_service.handle_appointment_request(type('obj', (object,), {'body': user_text})())
+            if scheduling_response:
+                # Adiciona resposta de agendamento ao histórico e retorna
+                self._update_memory(remote_jid, "assistant", scheduling_response)
+                logger.info(f"📅 Resposta de agendamento enviada: {scheduling_response}")
+                # Retorna a resposta com um prefixo especial para indicar que é uma resposta de agendamento
+                return f"[SCHEDULING_RESPONSE]{scheduling_response}"
+
+            # 2. Atualizar Memória com a mensagem do usuário
             self._update_memory(remote_jid, "user", user_text)
 
-            # 2. Construir Contexto para a IA
+            # 3. Construir Contexto para a IA
             messages_payload = [{"role": "system", "content": self.SYSTEM_PROMPT}]
             
             if remote_jid in self.sessions:
                 messages_payload.extend(self.sessions[remote_jid])
 
-            # 3. Pensar (Envia histórico completo)
+            # 4. Pensar (Envia histórico completo)
             response = await self.client_brain.chat.completions.create(
                 model=self.model_brain,
                 messages=messages_payload,
@@ -224,7 +246,7 @@ class BrainService:
             # Limpeza da resposta
             clean_reply = reply.strip().replace('"', '').replace("*", "")
             
-            # 4. Atualizar Memória com a resposta do Bot
+            # 5. Atualizar Memória com a resposta do Bot
             self._update_memory(remote_jid, "assistant", clean_reply)
             
             logger.info(f"🧠 Cérebro Respondeu (texto): {clean_reply}")
