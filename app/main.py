@@ -6,9 +6,10 @@ import asyncio
 import time
 import json
 from typing import Dict, Any
+from collections import OrderedDict
 
 from starlette.middleware.base import BaseHTTPMiddleware
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.config import settings
@@ -19,10 +20,31 @@ from app.services.metrics import metrics_service  # Importar o novo serviço de 
 from app.services.notification import get_notification_service
 from app.utils.files import safe_remove, cleanup_temp_files
 from app.utils.logger import setup_logger
+from app.utils.security import authenticate_request, check_rate_limit
 
 # Configura Logger
 logger = setup_logger(__name__)
 notification_service = get_notification_service()
+
+# Armazenamento em memória para IDs de mensagens já processadas
+processed_messages = OrderedDict()
+MAX_CACHE_SIZE = 1000
+CACHE_EXPIRY_SECONDS = 300  # 5 minutos
+
+def cleanup_old_messages():
+    """Limpa mensagens antigas do cache para evitar consumo excessivo de memória"""
+    current_time = time.time()
+    expired_keys = [
+        key for key, timestamp in processed_messages.items() 
+        if current_time - timestamp > CACHE_EXPIRY_SECONDS
+    ]
+    for key in expired_keys:
+        del processed_messages[key]
+    
+    # Garante tamanho máximo do cache
+    while len(processed_messages) > MAX_CACHE_SIZE:
+        oldest_key = next(iter(processed_messages))
+        del processed_messages[oldest_key]
 
 # --- Middleware de Logs ---
 class LogMiddleware(BaseHTTPMiddleware):
@@ -46,6 +68,28 @@ class LogMiddleware(BaseHTTPMiddleware):
         logger.info(f"⬅️ [RES] Status: {response.status_code}")
         return response
 
+# --- Middleware de Autenticação e Rate Limiting ---
+async def auth_rate_limit_middleware(request: Request, call_next):
+    # Caminhos que não precisam de autenticação
+    public_paths = ["/", "/health", "/qrcode", "/reset", "/webhook/evolution"]
+    
+    # Se não for um caminho público, verifica autenticação
+    if request.url.path not in public_paths:
+        # Verifica se a chave de API está presente no header
+        api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+        
+        if not authenticate_request(api_key):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        # Verifica rate limit baseado no IP
+        client_ip = request.client.host
+        if not check_rate_limit(client_ip, settings.rate_limit_max_requests, settings.rate_limit_window_seconds):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
+    # Continua com o próximo middleware ou rota
+    response = await call_next(request)
+    return response
+
 # Inicialização do FastAPI
 app = FastAPI(
     title="Voice SDR WhatsApp",
@@ -53,6 +97,7 @@ app = FastAPI(
     version="2.7.0"
 )
 app.add_middleware(LogMiddleware)
+app.middleware("http")(auth_rate_limit_middleware)
 
 # Métricas em Memória
 metrics = {
@@ -93,12 +138,30 @@ async def startup_event():
             logger.info("✅ WhatsApp detectado como CONECTADO.")
     except Exception:
         logger.warning("⚠️ Evolution API ainda não disponível no startup.")
+    
+    # Inicia a task de limpeza periódica
+    asyncio.create_task(periodic_cleanup())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Executa ao encerrar o servidor"""
     logger.info("🛑 Encerrando Voice SDR WhatsApp")
+
+
+async def periodic_cleanup():
+    """Função para limpeza periódica do cache de mensagens"""
+    while True:
+        try:
+            # Espera 5 minutos entre as limpezas
+            await asyncio.sleep(300)
+            cleanup_old_messages()
+            logger.debug(f"🧹 Limpeza periódica concluída. Cache atual: {len(processed_messages)} itens")
+        except asyncio.CancelledError:
+            logger.info("🧹 Task de limpeza periódica cancelada")
+            break
+        except Exception as e:
+            logger.error(f"Erro na limpeza periódica: {e}")
 
 
 @app.get("/", response_class=JSONResponse)
@@ -239,7 +302,25 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
         if key.get("fromMe"): return {"status": "ignored_from_me"}
         if "broadcast" in sender: return {"status": "ignored_broadcast"}
 
-        # 5. Detecta Mensagem de Áudio ou Texto
+        # 5. Verificação de mensagem duplicada
+        msg_id = key.get("id", "")
+        current_time = time.time()
+        
+        # Limpa mensagens antigas do cache periodicamente
+        if len(processed_messages) % 50 == 0:  # A cada 50 novas entradas
+            cleanup_old_messages()
+        
+        if msg_id in processed_messages:
+            # Verifica se o timestamp é recente o suficiente para ser considerado duplicata
+            msg_timestamp = processed_messages[msg_id]
+            if current_time - msg_timestamp < CACHE_EXPIRY_SECONDS:
+                logger.info(f"🔄 Mensagem duplicada ignorada: {msg_id}")
+                return {"status": "ignored_duplicate"}
+        
+        # Adiciona o ID da mensagem ao cache com timestamp
+        processed_messages[msg_id] = current_time
+
+        # 6. Detecta Mensagem de Áudio ou Texto
         msg_type = data.get("messageType")
         is_audio = msg_type == "audioMessage"
         is_text = msg_type in ["conversation", "extendedTextMessage"]
@@ -261,13 +342,11 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
         else:
             return {"status": "ignored_not_supported"}
 
-        # 6. Processamento
+        # 7. Processamento
         metrics["total_messages"] += 1
 
         # CORREÇÃO: Usa o remoteJid completo para evitar Erro 400
         phone_jid = sender 
-        msg_id = key.get("id")
-
         logger.info(f"{'🎤 Áudio' if is_audio else '💬 Texto'} VÁLIDO recebido de {phone_jid}. Iniciando pipeline...")
 
         background_tasks.add_task(
@@ -291,6 +370,8 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
 
 async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, message_id: str, is_audio: bool = True):
     """Pipeline: Download -> IA -> Voz -> Envio (ou Texto -> IA -> Texto -> Envio)"""
+    # Registra a mensagem processada com timestamp
+    processed_messages[message_id] = time.time()
     logger.info(f"🚀 [Pipeline] Iniciando para {phone_jid}...")
     input_path = None
     output_path = None
@@ -383,121 +464,4 @@ async def pipeline_sales_response(message_data: Dict[str, Any], phone_jid: str, 
     finally:
         safe_remove(input_path)
         safe_remove(output_path)
-
-
-# ==========================================
-# NOVOS ENDPOINTS PARA MÉTRICAS DO DASHBOARD
-# ==========================================
-
-@app.get("/metrics/daily_conversations")
-async def get_daily_conversations(start_date: str = None, end_date: str = None):
-    """
-    Endpoint para obter métricas diárias de conversas
-    """
-    from datetime import datetime
-    
-    start_dt = datetime.fromisoformat(start_date) if start_date else None
-    end_dt = datetime.fromisoformat(end_date) if end_date else None
-    
-    data = await metrics_service.get_daily_conversation_metrics(start_dt, end_dt)
-    return {"data": data}
-
-
-@app.get("/metrics/active_conversations")
-async def get_active_conversations():
-    """
-    Endpoint para obter conversas ativas nas últimas 24h
-    """
-    data = await metrics_service.get_active_conversations()
-    return {"data": data}
-
-
-@app.get("/metrics/message_types")
-async def get_message_types():
-    """
-    Endpoint para obter distribuição de tipos de mensagens
-    """
-    data = await metrics_service.get_message_type_distribution()
-    return {"data": data}
-
-
-@app.get("/metrics/response_rate")
-async def get_response_rate():
-    """
-    Endpoint para obter taxa de resposta do bot
-    """
-    data = await metrics_service.get_bot_response_rate()
-    return {"data": data}
-
-
-@app.get("/metrics/performance")
-async def get_performance_metrics(start_date: str = None, end_date: str = None):
-    """
-    Endpoint para obter métricas de performance
-    """
-    from datetime import datetime
-    
-    start_dt = datetime.fromisoformat(start_date) if start_date else None
-    end_dt = datetime.fromisoformat(end_date) if end_date else None
-    
-    data = await metrics_service.get_daily_performance_metrics(start_dt, end_dt)
-    return {"data": data}
-
-
-@app.get("/metrics/conversations_by_client")
-async def get_conversations_by_client(limit: int = 10):
-    """
-    Endpoint para obter conversas agrupadas por cliente
-    """
-    data = await metrics_service.get_conversations_by_client(limit)
-    return {"data": data}
-
-
-@app.get("/metrics/system_wide")
-async def get_system_wide_metrics():
-    """
-    Endpoint para obter métricas amplas do sistema
-    """
-    data = await metrics_service.get_system_wide_metrics()
-    return {"data": data}
-
-
-@app.get("/metrics/hourly_activity")
-async def get_hourly_activity():
-    """
-    Endpoint para obter atividade por hora do dia
-    """
-    data = await metrics_service.get_hourly_activity()
-    return {"data": data}
-
-
-@app.get("/metrics/weekly_activity")
-async def get_weekly_activity():
-    """
-    Endpoint para obter atividade por dia da semana
-    """
-    data = await metrics_service.get_weekly_activity()
-    return {"data": data}
-
-
-@app.get("/metrics/dashboard_summary")
-async def get_dashboard_summary():
-    """
-    Endpoint para obter um sumário completo para o dashboard
-    """
-    system_metrics = await metrics_service.get_system_wide_metrics()
-    recent_conversations = await metrics_service.get_daily_conversation_metrics()
-    active_conversations = await metrics_service.get_active_conversations()
-    message_types = await metrics_service.get_message_type_distribution()
-    response_rate = await metrics_service.get_bot_response_rate()
-    
-    return {
-        "system_metrics": system_metrics,
-        "recent_conversations": recent_conversations[:7],  # Últimos 7 dias
-        "active_conversations_count": len(active_conversations),
-        "top_active_conversation": active_conversations[0] if active_conversations else None,
-        "message_types": message_types,
-        "response_rate": response_rate,
-        "timestamp": time.time()
-    }
 
