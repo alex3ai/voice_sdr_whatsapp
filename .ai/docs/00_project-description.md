@@ -7,6 +7,8 @@ O projeto **Voice SDR WhatsApp** é um assistente de vendas autônomo (Sales Dev
 O sistema é projetado para automatizar o primeiro contato e a qualificação de leads, respondendo a perguntas frequentes e coletando informações iniciais 24/7.
 
 Embora o sdr-bot não possua banco de dados próprio (stateless), ele utiliza a Evolution API como fonte de histórico. Para garantir o contexto da conversação na IA, o bot consulta o histórico de mensagens via API REST (/chat/findMessages) antes de processar cada resposta.
+
+Importante: O bot agora é capaz de identificar e rejeitar educadamente perguntas fora do escopo de atuação da empresa TechSolutions, mantendo sua credibilidade e profissionalismo.
 ---
 
 ## 2. Stack Tecnológica
@@ -40,14 +42,14 @@ A arquitetura é baseada em microsserviços desacoplados que se comunicam atrav�
     2.  O `sdr-bot` recebe o evento e inicia uma tarefa em background para não bloquear a API.
     3.  **Download:** O áudio é baixado da Evolution API.
     4.  **Transcrição (Ouvido):** O arquivo de áudio é enviado para a API do **Groq**, que utiliza o modelo **Whisper** para transcrevê-lo rapidamente.
-    5.  **Inteligência (Cérebro):** O texto transcrito é enviado para a **Groq**, que utiliza um modelo como **llama-3.3-70b-versatile**, para gerar uma resposta textual contextualizada.
+    5.  **Inteligência (Cérebro):** O texto transcrito é enviado para a **Groq**, que utiliza um modelo como **llama-3.3-70b-versatile**, para gerar uma resposta contextualizada. O sistema agora inclui um filtro de conteúdo que verifica se a pergunta está dentro do escopo dos serviços da empresa antes de processar a resposta.
     6.  **Geração de Voz (TTS):** O texto gerado pela IA é convertido em um novo arquivo de áudio usando a API REST do **Azure Cognitive Services**.
     7.  **Envio da Resposta:** O novo áudio é enviado de volta para a Evolution API, que o encaminha para o usuário no WhatsApp como uma resposta à mensagem original.
 -   **Camadas da Aplicação (`app/`):**
     -   `main.py`: Entrypoint da API, gerenciamento de rotas e webhooks.
     -   `services/`: Lógica de negócio desacoplada.
         -   `evolution.py`: Comunicação com a Evolution API.
-        -   `brain.py`: Interação com a Groq.
+        -   `brain.py`: Interação com a Groq, incluindo filtragem de conteúdo.
         -   `voice.py`: Geração de áudio.
         -   `metrics.py`: Serviço para extração e análise de métricas do banco de dados da Evolution API.
     -   `models/`: Modelos de dados para requisições e respostas.

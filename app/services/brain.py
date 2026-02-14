@@ -24,15 +24,26 @@ class BrainService:
     SYSTEM_PROMPT = """
     Você é o Alex, um SDR sênior e consultor da 'TechSolutions'.
     
-    Objetivo: 
+    OBJETIVO PRINCIPAL:
     Conversar naturalmente com o lead para entender suas necessidades e, se fizer sentido, agendar uma reunião.
     
-    Diretrizes de Personalidade:
-    1. Responda de forma fluida e humana (varie o vocabulário, evite repetir vícios de linguagem como 'tá bom' em toda frase).
-    2. Seja conciso, mas entregue valor (respostas ideais entre 1 a 3 frases).
-    3. Use tom profissional mas acolhedor.
-    4. NUNCA use emojis.
-    5. Sempre mantenha a conversa viva com uma pergunta relevante no final.
+    SERVIÇOS DA EMPRESA:
+    - Desenvolvimento de software personalizado
+    - Consultoria em tecnologia da informação
+    - Segurança cibernética
+    - Análise de dados e inteligência de negócios
+    - Automação de processos
+    - Gestão de projetos e inovação digital
+    
+    DIRETRIZES IMPORTANTES:
+    1. Responda SOMENTE perguntas relacionadas aos serviços da TechSolutions.
+    2. Se o usuário perguntar sobre algo fora do escopo da TechSolutions, informe educadamente que você só pode ajudar com assuntos relacionados à empresa.
+    3. Responda de forma fluida e humana (varie o vocabulário, evite repetir vícios de linguagem como 'tá bom' em toda frase).
+    4. Seja conciso, mas entregue valor (respostas ideais entre 1 a 3 frases).
+    5. Use tom profissional mas acolhedor.
+    6. NUNCA use emojis.
+    7. Sempre mantenha a conversa viva com uma pergunta relevante no final.
+    8. Jamais responda perguntas sobre outros assuntos (história, geografia, ciência, etc.)
     """
 
     def __init__(self):
@@ -104,6 +115,67 @@ class BrainService:
         # Persiste a alteração no arquivo
         self._save_memory()
 
+    def _is_off_topic_request(self, user_text: str) -> bool:
+        """
+        Detecta se a mensagem do usuário é sobre um assunto fora do escopo da TechSolutions
+        """
+        user_text_lower = user_text.lower()
+        
+        # Palavras-chave comuns em perguntas fora do escopo
+        off_topic_keywords = [
+            # Perguntas gerais
+            "quem foi", "quem descobriu", "por que o brasil", "história do brasil", 
+            "quando foi", "o que foi", "como surgiu", "qual a origem",
+            
+            # Assuntos acadêmicos
+            "matéria de", "estudar ", "escola", "professor", "prova", "trabalho de ",
+            
+            # Assuntos pessoais não relacionados ao negócio
+            "namorar", "casar", "casamento", "filhos", "família", "relacionamento",
+            
+            # Assuntos não empresariais
+            "política", "eleição", "governador", "prefeito", "presidente",
+            
+            # Assuntos não relacionados à tecnologia/negócios
+            "culinária", "receita", "comida", "filme", "música", "esporte",
+            
+            # Perguntas sobre a própria IA (se o usuário mencionar que está sendo atendido por um bot)
+            "você é um bot", "você é humano", "quem criou você", "inteligência artificial",
+        ]
+        
+        # Verifica se alguma palavra-chave está presente no texto
+        for keyword in off_topic_keywords:
+            if keyword in user_text_lower:
+                return True
+        
+        # Verifica padrões de perguntas comuns fora do escopo
+        question_patterns = [
+            "quem foi ", "quem descobriu ", "quem inventou ", "quem criou ",
+            "quando foi ", "como surgiu ", "qual a origem ", "de onde veio ",
+            "o que é ", "o que foi ", "historia de ", "história de "
+        ]
+        
+        for pattern in question_patterns:
+            if pattern in user_text_lower:
+                return True
+                
+        return False
+
+    def _generate_off_topic_response(self) -> str:
+        """
+        Gera uma resposta educada para quando o usuário faz perguntas fora do escopo
+        """
+        responses = [
+            "Desculpe, mas só posso ajudar com informações sobre os serviços da TechSolutions. Posso te ajudar com algo relacionado à tecnologia da informação, desenvolvimento de software, consultoria ou automação de processos?",
+            "Essa pergunta está fora do meu campo de atuação. Sou assistente da TechSolutions e posso te ajudar com nossos serviços de tecnologia. Gostaria de saber mais sobre como podemos ajudar o seu negócio?",
+            "Infelizmente não posso responder sobre esse assunto. Estou aqui para apresentar os serviços da TechSolutions. Tem interesse em soluções de TI, consultoria ou automação?",
+            "Só posso fornecer informações sobre os serviços da TechSolutions. Somos especializados em desenvolvimento de software, consultoria em TI, segurança cibernética e automação de processos. Gostaria de saber mais sobre algum desses serviços?"
+        ]
+        
+        # Retorna uma resposta aleatória para variar
+        import random
+        return random.choice(responses)
+
     @retry_with_backoff(
         max_retries=3,
         base_delay=1.0,
@@ -159,7 +231,14 @@ class BrainService:
             if not user_text or len(user_text) < 2: 
                 return "Oi, não consegui te ouvir direito. Pode mandar de novo?"
 
-            # 2. Verificar intenção de agendamento antes de processar pela IA
+            # 2. Verificar se a solicitação está fora do escopo antes de processar pela IA
+            if self._is_off_topic_request(user_text):
+                off_topic_response = self._generate_off_topic_response()
+                self._update_memory(remote_jid, "assistant", off_topic_response)
+                logger.info(f"🎯 Resposta fora do escopo para {remote_jid}: {off_topic_response}")
+                return off_topic_response
+
+            # 3. Verificar intenção de agendamento antes de processar pela IA
             scheduling_response = await self.appointment_service.handle_appointment_request(type('obj', (object,), {'body': user_text})())
             if scheduling_response:
                 # Adiciona resposta de agendamento ao histórico e retorna
@@ -168,16 +247,16 @@ class BrainService:
                 # Retorna a resposta com um prefixo especial para indicar que é uma resposta de agendamento
                 return f"[SCHEDULING_RESPONSE]{scheduling_response}"
 
-            # 3. Atualizar Memória com a fala do usuário
+            # 4. Atualizar Memória com a fala do usuário
             self._update_memory(remote_jid, "user", user_text)
 
-            # 4. Construir Contexto para a IA
+            # 5. Construir Contexto para a IA
             messages_payload = [{"role": "system", "content": self.SYSTEM_PROMPT}]
             
             if remote_jid in self.sessions:
                 messages_payload.extend(self.sessions[remote_jid])
 
-            # 5. Pensar (Envia histórico completo)
+            # 6. Pensar (Envia histórico completo)
             response = await self.client_brain.chat.completions.create(
                 model=self.model_brain,
                 messages=messages_payload,
@@ -190,7 +269,7 @@ class BrainService:
             # Limpeza da resposta
             clean_reply = reply.strip().replace('"', '').replace("*", "")
             
-            # 6. Atualizar Memória com a resposta do Bot
+            # 7. Atualizar Memória com a resposta do Bot
             self._update_memory(remote_jid, "assistant", clean_reply)
             
             logger.info(f"🧠 Cérebro Respondeu: {clean_reply}")
@@ -215,7 +294,14 @@ class BrainService:
             if not user_text or len(user_text) < 2: 
                 return "Oi, não consegui entender direito. Pode repetir?"
 
-            # 1. Verificar intenção de agendamento antes de processar pela IA
+            # 1. Verificar se a solicitação está fora do escopo antes de processar pela IA
+            if self._is_off_topic_request(user_text):
+                off_topic_response = self._generate_off_topic_response()
+                self._update_memory(remote_jid, "assistant", off_topic_response)
+                logger.info(f"🎯 Resposta fora do escopo para {remote_jid}: {off_topic_response}")
+                return off_topic_response
+
+            # 2. Verificar intenção de agendamento antes de processar pela IA
             scheduling_response = await self.appointment_service.handle_appointment_request(type('obj', (object,), {'body': user_text})())
             if scheduling_response:
                 # Adiciona resposta de agendamento ao histórico e retorna
@@ -224,16 +310,16 @@ class BrainService:
                 # Retorna a resposta com um prefixo especial para indicar que é uma resposta de agendamento
                 return f"[SCHEDULING_RESPONSE]{scheduling_response}"
 
-            # 2. Atualizar Memória com a mensagem do usuário
+            # 3. Atualizar Memória com a mensagem do usuário
             self._update_memory(remote_jid, "user", user_text)
 
-            # 3. Construir Contexto para a IA
+            # 4. Construir Contexto para a IA
             messages_payload = [{"role": "system", "content": self.SYSTEM_PROMPT}]
             
             if remote_jid in self.sessions:
                 messages_payload.extend(self.sessions[remote_jid])
 
-            # 4. Pensar (Envia histórico completo)
+            # 5. Pensar (Envia histórico completo)
             response = await self.client_brain.chat.completions.create(
                 model=self.model_brain,
                 messages=messages_payload,
@@ -246,7 +332,7 @@ class BrainService:
             # Limpeza da resposta
             clean_reply = reply.strip().replace('"', '').replace("*", "")
             
-            # 5. Atualizar Memória com a resposta do Bot
+            # 6. Atualizar Memória com a resposta do Bot
             self._update_memory(remote_jid, "assistant", clean_reply)
             
             logger.info(f"🧠 Cérebro Respondeu (texto): {clean_reply}")
