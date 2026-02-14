@@ -32,7 +32,7 @@ Com base em .ai/docs/00_project-description.md, estas são as user stories no fo
   - Regra de negócio: As métricas devem estar disponíveis via endpoints de API específicos
   - Edge case: O sistema deve continuar funcionando mesmo que o banco de dados de métricas esteja temporariamente indisponível
 
-- [ ] **Como** um administrador, **quero** ter controles de segurança e autenticação **para** proteger o acesso às funcionalidades do SDR Bot.
+- [x] **Como** um administrador, **quero** ter controles de segurança e autenticação **para** proteger o acesso às funcionalidades do SDR Bot.
   **Critérios:**
   - Dado que um usuário tente acessar os endpoints, quando não estiver autenticado, então deverá receber erro de autorização
   - Regra de negócio: Somente usuários autenticados podem acessar os dados sensíveis

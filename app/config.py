@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     evolution_api_key: str = Field(..., description="Global API Key para autenticação")
     evolution_instance_name: str = Field(..., description="Nome da instância na Evolution")
     
+    # Chave de API para proteger os endpoints
+    api_key: str = Field(default="", description="Chave de API para proteger os endpoints da aplicação")
+    
+    # App Secret para validação de webhooks (Meta)
+    app_secret: str = Field(default="", description="App secret para validação de webhooks da Meta")
+    
     # LLM (Groq Compatible API)
     # URL Base da Groq
     openai_base_url: str = Field(default="https://api.groq.com/openai/v1/", description="URL Base do LLM")
@@ -55,9 +61,14 @@ class Settings(BaseSettings):
     max_audio_size_mb: int = 16
 
     # Configurações de notificação
-    notification_type: Literal["console", "file"] = Field(default="console", description="Tipo de notificação para erros críticos")
+    notification_type: Literal["console", "file", "webhook"] = Field(default="console", description="Tipo de notificação para erros críticos")
     notification_log_file_path: str = Field(default="notifications.log", description="Caminho do arquivo de log de notificação")
-    
+    notification_webhook_url: str = Field(default="", description="Webhook para notificação de erros críticos")
+
+    # Rate limiting
+    rate_limit_max_requests: int = Field(default=10, description="Número máximo de requisições por janela de tempo")
+    rate_limit_window_seconds: int = Field(default=60, description="Janela de tempo para rate limiting em segundos")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -90,4 +101,5 @@ class Settings(BaseSettings):
         """Garante que URLs não terminem com barra /"""
         return v.rstrip("/") if isinstance(v, str) else v
 
+# Instanciação do objeto settings
 settings = Settings()
