@@ -79,6 +79,16 @@ A View `system_wide_metrics` fornece KPIs gerais:
 - Proporção de respostas do bot
 - Dias de atividade
 
+## Integração com Serviços Adicionais
+
+### Serviço de Agendamento
+
+O serviço de agendamento ([appointment.py](file:///c:\Users\alex_\Desktop\PE33\Projetos%20PE33\Projeto%2020%20-%20voice_sdr_whatsapp\voice_sdr_whatsapp\app\services\appointment.py)) detecta intenções de agendamento nas conversas e registra essas interações. Embora não gere métricas diretamente no dashboard, pode influenciar os dados de engajamento do usuário.
+
+### Serviço de Notificação
+
+O serviço de notificação ([notification.py](file:///c:\Users\alex_\Desktop\PE33\Projetos%20PE33\Projeto%2020%20-%20voice_sdr_whatsapp\voice_sdr_whatsapp\app\services\notification.py)) registra erros críticos no sistema, podendo ser integrado com sistemas de monitoramento para alertas proativos.
+
 ## Configuração do Banco de Dados
 
 Para que as métricas funcionem corretamente, é necessário:
@@ -101,7 +111,7 @@ DATABASE_NAME=evolution
 
 ## Implementação Técnica
 
-### Serviço de Métricas ([app/services/metrics.py](file:///c%3A/Users/alex_/Desktop/PE33/Projetos PE33/Projeto 20 - voice_sdr_whatsapp/voice_sdr_whatsapp/app/services/metrics.py))
+### Serviço de Métricas ([app/services/metrics.py](file:///c:\Users\alex_\Desktop\PE33\Projetos%20PE33\Projeto%2020%20-%20voice_sdr_whatsapp\voice_sdr_whatsapp\app\services\metrics.py))
 
 O serviço implementa:
 

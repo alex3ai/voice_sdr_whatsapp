@@ -56,7 +56,23 @@ Este documento define os padrões de codificação e práticas recomendadas para
 - **Validação de Parâmetros**: Os endpoints devem validar parâmetros de entrada como datas e limites
 - **Tipagem Adequada**: Utilizar tipagem adequada para os dados retornados pelos métodos de métricas
 
-## 9. Segurança
+## 9. Serviço de Agendamento (Appointment Service)
+
+- **Responsabilidade Única**: Detectar intenções de agendamento e fornecer links de agendamento
+- **Detecção de Intenção**: Usar expressões regulares e palavras-chave para identificar intenções de agendamento
+- **Configuração**: Utilizar variáveis de ambiente para o link de agendamento (ex: `CALENDAR_LINK`)
+- **Interface Clara**: Métodos devem ter nomes autoexplicativos como `detect_scheduling_intent`, `generate_scheduling_response`, `handle_appointment_request`
+- **Logging**: Registrar quando intenções de agendamento são detectadas e respostas são geradas
+
+## 10. Serviço de Notificação (Notification Service)
+
+- **Interface Genérica**: Implementar uma interface base `NotificationService` com métodos como `notify_error`
+- **Estratégias de Implementação**: Criar classes concretas como `ConsoleNotificationService`, `FileNotificationService`, etc.
+- **Dados de Contexto**: O método `notify_error` deve aceitar exceção e dados contextuais extras
+- **Configuração**: Permitir selecionar a estratégia de notificação via variáveis de ambiente
+- **Uso Adequado**: Utilizar para notificar erros críticos no pipeline de processamento
+
+## 11. Segurança
 
 - Não expor informações sensíveis nos logs
 - Validar entradas recebidas via webhook
